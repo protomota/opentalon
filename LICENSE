@@ -56,8 +56,7 @@ any third-party brand owner.
 5. Independent third-party rights
 
 Third-party source code and assets retain their existing licenses.
-These include Node.js, Sparkle, Electron, React, Lucide icons, and bundled
-fonts. Preserve their copyright and license notices and comply with their terms.
+These include Node.js and Sparkle. Preserve their copyright and license notices and comply with their terms.
 
 Nothing in this license narrows permissions granted by a third-party
 license, including any commercial use or redistribution it permits.

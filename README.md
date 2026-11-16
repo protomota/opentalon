@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/opentalon-logo-1024.png" alt="OpenTalon icon" width="104">
+  <img src="docs/screenshots/opentalon-app-icon.png" alt="OpenTalon app icon" width="148">
 </p>
 
 <h1 align="center">OpenTalon</h1>
@@ -49,18 +49,9 @@ This builds the SwiftUI app and bundles the Node.js service used by the local SQ
 
 Open `native/ios/OpenTalonPhone.xcodeproj` in Xcode and run the **OpenTalonPhone** scheme. To test iCloud sync on hardware, configure the Mac and mobile builds with bundle identifiers and a CloudKit container under your own Apple Developer team.
 
-## Electron edition and tests
+## Run tests
 
-Use Node.js 25 or later.
-
-```sh
-npm ci
-npm run build
-npm test
-npm start
-```
-
-Run `node --test native/integration.test.cjs` for native service checks or `swift test --package-path native/CompanionCore` for companion tests.
+Run `node --test native/runtime/*.test.cjs native/integration.test.cjs` with Node.js 25 or later. Run `swift test --package-path native/CompanionCore` for the shared Swift tests.
 
 See the guides for [connecting an agent](docs/MCP-SETUP.md), [sending tasks](docs/SEND-TO-AGENT.md), and [backing up your board](docs/BACKUPS.md). For help with the apps, visit [OpenTalon Support](https://opentalon.ai/help).
 

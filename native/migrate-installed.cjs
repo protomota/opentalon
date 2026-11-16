@@ -8,7 +8,7 @@ const os = require('node:os')
 const path = require('node:path')
 const { DatabaseSync, backup } = require('node:sqlite')
 const { setTimeout: pause } = require('node:timers/promises')
-const { Store } = require('../electron/store.cjs')
+const { Store } = require('./runtime/store.cjs')
 
 const support = process.env.OPENTALON_CUTOVER_TEST_SUPPORT ||
   path.join(os.homedir(), 'Library', 'Application Support')

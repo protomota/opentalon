@@ -1,4 +1,4 @@
-name: Desktop app checks
+name: Native app checks
 on:
   push:
     branches: [main]
@@ -15,10 +15,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '25'
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - run: npm ci
-      - run: npm run build
-      - run: npm test
+      - run: node --test native/runtime/*.test.cjs native/integration.test.cjs
         env:
           OPENTALON_TEST_ROOT: ${{ runner.temp }}/opentalon-tests
+      - run: swift test --package-path native/CompanionCore

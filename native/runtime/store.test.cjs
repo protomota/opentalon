@@ -286,42 +286,6 @@ test('due dates survive editing, restart, both backup formats and v4 migration; 
   )
   assert.equal(f.store.agentJobs().length, 0)
 })
-test('drop preview stays inside the visible column while vertically or horizontally scrolled', async () => {
-  const { dropPreviewBounds } = await import('../src/task-view.ts')
-  const viewport = { left: 230, top: 44, right: 1100, bottom: 960 }
-  assert.deepEqual(
-    dropPreviewBounds({ left: 500, top: -9000, right: 750, bottom: 8000 }, viewport),
-    { left: 505, top: 49, width: 240, height: 906 }
-  )
-  assert.deepEqual(
-    dropPreviewBounds({ left: 1000, top: 240, right: 1250, bottom: 8000 }, viewport),
-    { left: 1005, top: 245, width: 90, height: 710 }
-  )
-  assert.equal(
-    dropPreviewBounds({ left: 1200, top: 240, right: 1450, bottom: 8000 }, viewport),
-    null
-  )
-  assert.equal(
-    dropPreviewBounds({ left: 500, top: 1000, right: 750, bottom: 1200 }, viewport),
-    null
-  )
-})
-test('calendar due dates become red today and stay overdue without UTC date shifts', async () => {
-  const { dueDatePresentation, localDateKey } = await import('../src/task-view.ts')
-  assert.equal(localDateKey(new Date(2026, 10, 10, 0, 1)), '2026-11-10')
-  assert.deepEqual(dueDatePresentation(null, '2026-11-10'), {
-    text: 'No due date',
-    overdue: false,
-    title: 'No due date set',
-  })
-  assert.equal(dueDatePresentation('2026-11-10', '2026-11-10').text, 'Due today')
-  assert.equal(dueDatePresentation('2026-11-10', '2026-11-10').overdue, true)
-  assert.equal(dueDatePresentation('2026-11-09', '2026-11-10').overdue, true)
-  assert.match(dueDatePresentation('2026-11-09', '2026-11-10').text, /^Overdue/)
-  assert.equal(dueDatePresentation('2026-11-10', '2026-11-11').overdue, true)
-  assert.equal(dueDatePresentation('2026-11-11', '2026-11-10').overdue, false)
-  assert.match(dueDatePresentation('2027-01-12', '2026-11-10').text, /2027/)
-})
 test('drag ordering preserves the displayed priority order, hidden tasks and manual tracking across restart', async (t) => {
   const f = fixture(t)
   const boardId = f.store.boards()[0].id
@@ -336,9 +300,8 @@ test('drag ordering preserves the displayed priority order, hidden tasks and man
       (await f.write('create_task', { boardId, title, priority, notes: 'Preserve my details' }))
         .task
     )
-  const { selectTasks, reorderTaskIds, dropEdge } = await import('../src/task-view.ts')
-  const displayed = selectTasks(original, '', { priority: 'All', sort: 'priority-desc' })
-  const orderedIds = reorderTaskIds(displayed, displayed[0].id, displayed[1].id, 'after')
+  const [low, firstHigh, urgent, otherHigh] = original.map((task) => task.id)
+  const orderedIds = [firstHigh, urgent, otherHigh, low]
   const input = {
     boardId,
     status: 'To do',
@@ -381,12 +344,6 @@ test('drag ordering preserves the displayed priority order, hidden tasks and man
     (await f.run('list_tasks')).tasks.map((task) => task.id),
     orderedIds
   )
-  assert.equal(dropEdge(110, 100, 100), 'before')
-  assert.equal(dropEdge(190, 100, 100), 'after')
-  assert.deepEqual(reorderTaskIds(displayed, displayed[0].id), [
-    ...displayed.slice(1).map((task) => task.id),
-    displayed[0].id,
-  ])
   const high = (await f.run('list_tasks', { priority: 'High' })).tasks
   await f.write('move_task', {
     id: high[1].id,
@@ -482,187 +439,6 @@ test('priority filtering/sorting and definitions persist, restore and migrate fr
   assert.equal(migrated.task(task.id).definitionOfDone, '')
   assert.equal(migrated.db.prepare('PRAGMA user_version').get().user_version, FORMAT)
   migrated.close()
-})
-test('board filtering combines search with priority and preserves manual order on ties', async () => {
-  const { selectTasks, notesPreview, readBoardViews } = await import('../src/task-view.ts')
-  const tasks = [
-    { id: 'a', title: 'Résumé high', notes: 'context', priority: 'High', position: 1 },
-    { id: 'b', title: 'Résumé urgent', notes: '', priority: 'Urgent', position: 3 },
-    { id: 'c', title: 'Other high', notes: '', priority: 'High', position: 0 },
-    { id: 'd', title: 'Résumé none', notes: '', priority: 'None', position: 2 },
-  ]
-  assert.deepEqual(
-    selectTasks(tasks, 'résumé', { priority: 'All', sort: 'priority-desc' }).map((t) => t.id),
-    ['b', 'a', 'd']
-  )
-  assert.deepEqual(
-    selectTasks(tasks, '', { priority: 'High', sort: 'manual' }).map((t) => t.id),
-    ['c', 'a']
-  )
-  assert.deepEqual(
-    selectTasks(tasks, '', { priority: 'All', sort: 'priority-asc' }).map((t) => t.id),
-    ['c', 'a', 'b', 'd']
-  )
-  assert.deepEqual(selectTasks(tasks, 'unmatched', { priority: 'High', sort: 'manual' }), [])
-  assert.equal(
-    notesPreview(
-      'Imported from Daily Brief\nOriginal priority: High\n\nUseful details\n\nOriginal Daily Brief action (complete source record):\n{}'
-    ),
-    'Useful details'
-  )
-  assert.deepEqual(readBoardViews('{"x":{"priority":"High","sort":"priority-desc"},"bad":{}}'), {
-    x: { priority: 'High', sort: 'priority-desc' },
-  })
-})
-test('all tasks groups projects in project order and sorts priority across projects', async () => {
-  const { selectTasks, orderAllTasks } = await import('../src/task-view.ts')
-  const tasks = [
-    {
-      id: 'a',
-      boardId: 'first',
-      title: 'Ship docs',
-      notes: '',
-      priority: 'Low',
-      position: 1,
-      status: 'To do',
-    },
-    {
-      id: 'b',
-      boardId: 'second',
-      title: 'Ship app',
-      notes: '',
-      priority: 'Urgent',
-      position: 0,
-      status: 'To do',
-    },
-    {
-      id: 'c',
-      boardId: 'first',
-      title: 'Review',
-      notes: '',
-      priority: 'High',
-      position: 0,
-      status: 'To do',
-    },
-  ]
-  const projectOrder = new Map([
-    ['first', 0],
-    ['second', 1],
-  ])
-  const ordered = orderAllTasks(tasks, projectOrder, [])
-  const rank = new Map(ordered.map((task, index) => [task.id, index]))
-  assert.deepEqual(
-    selectTasks(tasks, '', { priority: 'All', sort: 'manual' }, rank).map((task) => task.id),
-    ['c', 'a', 'b']
-  )
-  assert.deepEqual(
-    selectTasks(tasks, 'ship', { priority: 'All', sort: 'priority-desc' }, rank).map(
-      (task) => task.id
-    ),
-    ['b', 'a']
-  )
-})
-test('all tasks order interleaves projects and refills each project in its board order', async () => {
-  const { orderAllTasks } = await import('../src/task-view.ts')
-  const task = (id, boardId, position, status = 'To do') => ({ id, boardId, position, status })
-  const projectOrder = new Map([
-    ['p', 0],
-    ['q', 1],
-  ])
-  const ids = (tasks, order) => orderAllTasks(tasks, projectOrder, order).map((item) => item.id)
-  const tasks = [task('p1', 'p', 0), task('p2', 'p', 1), task('q1', 'q', 0), task('q2', 'q', 1)]
-  // No saved order: project order, then position.
-  assert.deepEqual(ids(tasks, []), ['p1', 'p2', 'q1', 'q2'])
-  // A saved interleaving is followed; unknown and duplicate ids are ignored.
-  assert.deepEqual(ids(tasks, ['q1', 'gone', 'p1', 'q2', 'p2', 'q1']), ['q1', 'p1', 'q2', 'p2'])
-  // A reorder on project p (positions swapped) refills p's slots without touching q's.
-  const swapped = [task('p1', 'p', 1), task('p2', 'p', 0), task('q1', 'q', 0), task('q2', 'q', 1)]
-  assert.deepEqual(ids(swapped, ['q1', 'p1', 'q2', 'p2']), ['q1', 'p2', 'q2', 'p1'])
-  // Tasks the saved order has not seen go last in project order; columns stay separate.
-  const more = [...tasks, task('q3', 'q', 2), task('p3', 'p', 2), task('d1', 'q', 0, 'Done')]
-  assert.deepEqual(ids(more, ['q2', 'p1', 'q1', 'p2']), ['q1', 'p1', 'q2', 'p2', 'p3', 'q3', 'd1'])
-})
-test('reorder_all_tasks keeps project orders, status moves and the global order in step', async (t) => {
-  const f = fixture(t)
-  const { orderAllTasks } = await import('../src/task-view.ts')
-  const p = f.store.boards()[0].id
-  const q = (await f.write('create_board', { name: 'Second' })).board.id
-  const add = async (boardId, title, status = 'To do') =>
-    (await f.write('create_task', { boardId, title, status })).task.id
-  const p1 = await add(p, 'p1')
-  const p2 = await add(p, 'p2')
-  const q1 = await add(q, 'q1')
-  const q2 = await add(q, 'q2')
-  const d1 = await add(q, 'd1', 'Done')
-  const column = (status) => {
-    const snapshot = f.store.snapshot()
-    return orderAllTasks(
-      snapshot.tasks.filter((task) => !task.deleted),
-      new Map(snapshot.boards.map((board, index) => [board.id, index])),
-      snapshot.allTasksOrder
-    )
-      .filter((task) => task.status === status)
-      .map((task) => task.id)
-  }
-  const projectColumn = (boardId, status) =>
-    f.store
-      .snapshot()
-      .tasks.filter((task) => !task.deleted && task.boardId === boardId && task.status === status)
-      .sort((a, b) => a.position - b.position)
-      .map((task) => task.id)
-  const reorder = (status, taskIds, expectedRevision = f.store.revision()) =>
-    f.write('reorder_all_tasks', { status, taskIds, expectedRevision })
-  assert.deepEqual(column('To do'), [p1, p2, q1, q2])
-  // Reorder within a column across two projects: both projects follow.
-  await reorder('To do', [q2, p2, q1, p1])
-  assert.deepEqual(column('To do'), [q2, p2, q1, p1])
-  assert.deepEqual(projectColumn(p, 'To do'), [p2, p1])
-  assert.deepEqual(projectColumn(q, 'To do'), [q2, q1])
-  // A reorder on a project board shows up in All tasks without another global write.
-  await f.write('reorder_tasks', {
-    boardId: p,
-    status: 'To do',
-    taskIds: [p1, p2],
-    expectedRevision: f.store.revision(),
-  })
-  assert.deepEqual(column('To do'), [q2, p1, q1, p2])
-  // A card dragged in from another column changes status and lands at the chosen spot.
-  await reorder('To do', [q2, d1, p1, q1, p2])
-  assert.equal(f.store.task(d1).status, 'To do')
-  assert.deepEqual(column('To do'), [q2, d1, p1, q1, p2])
-  assert.deepEqual(projectColumn(q, 'To do'), [q2, d1, q1])
-  assert.deepEqual(column('Done'), [])
-  // Stale revisions and wrong id sets are rejected without changes.
-  const before = f.store.revision()
-  await assert.rejects(reorder('To do', [p1, p2, q1, q2, d1], before - 1), { code: 'CONFLICT' })
-  await assert.rejects(reorder('To do', [p1, p2, q1, q2]), { code: 'INVALID_ARGUMENT' })
-  await assert.rejects(reorder('To do', [p1, p2, q1, q2, d1, 'missing']), {
-    code: 'INVALID_ARGUMENT',
-  })
-  const i1 = await add(p, 'i1', 'In progress')
-  const i2 = await add(q, 'i2', 'In progress')
-  await assert.rejects(reorder('To do', [p1, p2, q1, q2, d1, i1, i2]), {
-    code: 'INVALID_ARGUMENT',
-  })
-  assert.deepEqual(column('To do'), [q2, d1, p1, q1, p2])
-  // Trashed tasks drop out; the order survives a restart and both backup formats.
-  const trashed = f.store.task(p2)
-  await f.write('trash_task', { id: p2, expectedRevision: trashed.revision })
-  await reorder('To do', [p1, q2, d1, q1])
-  assert.ok(!f.store.allTasksOrder().includes(p2))
-  f.restart()
-  assert.deepEqual(column('To do'), [p1, q2, d1, q1])
-  for (const format of ['json', 'sqlite']) {
-    const exported = await f.write('create_backup', { format })
-    await reorder('To do', [q1, d1, q2, p1])
-    const preview = await f.run('preview_destructive_action', {
-      action: 'restore_backup',
-      path: exported.path,
-    })
-    await f.write('confirm_destructive_action', { token: preview.token })
-    assert.deepEqual(column('To do'), [p1, q2, d1, q1])
-  }
-  assert.deepEqual(column('In progress'), [i1, i2])
 })
 test('empty launch; transactional CRUD, ordering, conflict, Unicode search and restart', async (t) => {
   const f = fixture(t),
@@ -983,9 +759,6 @@ test('selected Trash purge binds exact records, rejects live tasks, and replays 
 
 test('board icons: suggested on create, set and cleared by revision, validated, and kept across restart and both backup formats', async (t) => {
   const f = fixture(t)
-  const { boardIcons } = require('./contracts.cjs')
-  const { boardIconNames } = await import('../src/board-icon-names.ts')
-  assert.deepEqual([...boardIconNames], boardIcons)
   assert.equal(f.store.boards()[0].icon, null)
   assert.equal((await f.write('create_board', { name: 'Home & HOA' })).board.icon, 'house')
   assert.equal((await f.write('create_board', { name: 'Zxqv' })).board.icon, null)

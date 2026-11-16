@@ -8,6 +8,8 @@
 
 <p align="center">
   <a href="https://opentalon.ai/download"><strong>Download for Mac</strong></a> ·
+  <a href="#connect-codex-and-claude-through-mcp">MCP setup</a> ·
+  <a href="#send-a-task-to-an-agent">Send to agent</a> ·
   <a href="#build-the-mac-app">Build it yourself</a> ·
   <a href="LICENSE">Source-available license</a>
 </p>
@@ -16,9 +18,37 @@
 
 ## Plan your work on Mac
 
-OpenTalon keeps your tasks, projects, notes, and attachments on your Mac. Move a card to **Sent to agent** to hand it to Codex or Claude, or connect either agent to your board through OpenTalon's local MCP server.
+OpenTalon keeps your tasks, projects, notes, and attachments on your Mac. The board shows what’s ready to start, what you’ve handed off, and what’s done.
 
 ![OpenTalon for Mac showing the To do, Sent to agent, In progress, and Done columns](docs/screenshots/mac-board.webp)
+
+## Connect Codex and Claude through MCP
+
+OpenTalon’s local Model Context Protocol (MCP) connection lets an agent read and update your boards from its chat.
+
+1. On Mac, open **Settings → Agent connection**, turn on **Enable MCP connection**, and click **Test connection**.
+2. For **Claude Code**, click **Save project connection…** in OpenTalon. Open the same folder in Claude’s **Code** tab and approve the connection when prompted.
+3. For **Codex**, add a **STDIO** server under **Settings → MCP servers**. Copy the fields shown in OpenTalon’s Codex setup, then save and reload the server.
+
+> “List my OpenTalon projects and tell me which tasks are in progress.”
+
+## Send a task to an agent
+
+On Mac, move a card to **Sent to agent**. Choose Codex or Claude and select a model when options are available. OpenTalon starts a saved conversation in your configured working folder and moves the card to **In progress** when the agent picks it up.
+
+On iPhone or iPad, open a task and tap **Send to agent**. Choose the agent and model, add an optional comment, and confirm. Your Mac starts the work after the request syncs.
+
+Follow progress on the card. Add feedback or a screenshot to continue in the same conversation, and read the completion report in **Comments**.
+
+<table>
+  <tr><th>Agent activity on Mac</th><th>Agent queue on iPhone</th></tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/mac-agent-activity.webp" alt="Mac task details showing Claude Code waiting for input, with comments below" width="540"></td>
+    <td align="center"><img src="docs/screenshots/iphone-agent-queue.webp" alt="iPhone Queue showing tasks sent to an agent and tasks in progress" width="185"></td>
+  </tr>
+</table>
+
+[Read the Send to agent guide](docs/SEND-TO-AGENT.md)
 
 ## Capture and follow up on iPhone and iPad
 
@@ -53,7 +83,7 @@ Open `native/ios/OpenTalonPhone.xcodeproj` in Xcode and run the **OpenTalonPhone
 
 Run `node --test native/runtime/*.test.cjs native/integration.test.cjs` with Node.js 25 or later. Run `swift test --package-path native/CompanionCore` for the shared Swift tests.
 
-See the guides for [connecting an agent](docs/MCP-SETUP.md), [sending tasks](docs/SEND-TO-AGENT.md), and [backing up your board](docs/BACKUPS.md). For help with the apps, visit [OpenTalon Support](https://opentalon.ai/help).
+See the guide for [backing up your board](docs/BACKUPS.md). For help with the apps, visit [OpenTalon Support](https://opentalon.ai/help).
 
 ## License
 

@@ -32,6 +32,8 @@ OpenTalon’s local Model Context Protocol (MCP) connection lets an agent read a
 
 > “List my OpenTalon projects and tell me which tasks are in progress.”
 
+![The Agent connection section in OpenTalon for Mac with Enable MCP connection and Test connection](docs/screenshots/mac-mcp-connection.webp)
+
 ## Send a task to an agent
 
 On Mac, move a card to **Sent to agent**. Choose Codex or Claude and select a model when options are available. OpenTalon starts a saved conversation in your configured working folder and moves the card to **In progress** when the agent picks it up.
@@ -41,10 +43,10 @@ On iPhone or iPad, open a task and tap **Send to agent**. Choose the agent and m
 Follow progress on the card. Add feedback or a screenshot to continue in the same conversation, and read the completion report in **Comments**.
 
 <table>
-  <tr><th>Agent activity on Mac</th><th>Agent queue on iPhone</th></tr>
+  <tr><th>Agent activity on Mac</th><th>Send to agent on iPhone</th></tr>
   <tr>
     <td align="center"><img src="docs/screenshots/mac-agent-activity.webp" alt="Mac task details showing Claude Code waiting for input, with comments below" width="540"></td>
-    <td align="center"><img src="docs/screenshots/iphone-agent-queue.webp" alt="iPhone Queue showing tasks sent to an agent and tasks in progress" width="185"></td>
+    <td align="center"><img src="docs/screenshots/iphone-send-to-agent.webp" alt="Send to agent on iPhone with Codex and Claude choices, a model selector, and an optional comment" width="185"></td>
   </tr>
 </table>
 

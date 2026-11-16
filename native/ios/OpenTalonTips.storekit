@@ -1,0 +1,45 @@
+{
+  "identifier": "16F73CD9-733B-4B28-924E-92FC4D01FBCF",
+  "nonRenewingSubscriptions": [],
+  "products": [
+    {
+      "displayPrice": "9.99",
+      "familyShareable": false,
+      "internalID": "16F73CD9-733B-4B28-924E-92FC4D01FBC3",
+      "localizations": [{"description": "One personal OpenTalon support ticket for Mac, iPhone or iPad.", "displayName": "Personal Technical Support", "locale": "en_US"}],
+      "productID": "com.protomota.opentalon.support.ticket",
+      "referenceName": "OpenTalon Support Ticket",
+      "type": "Consumable"
+    },
+    {
+      "displayPrice": "0.99",
+      "familyShareable": false,
+      "internalID": "16F73CD9-733B-4B28-924E-92FC4D01FBC0",
+      "localizations": [{"description": "An optional one-time tip to support OpenTalon.", "displayName": "Small Tip", "locale": "en_US"}],
+      "productID": "com.protomota.opentalon.tip.small",
+      "referenceName": "Small Tip",
+      "type": "Consumable"
+    },
+    {
+      "displayPrice": "2.99",
+      "familyShareable": false,
+      "internalID": "16F73CD9-733B-4B28-924E-92FC4D01FBC1",
+      "localizations": [{"description": "An optional one-time tip to support OpenTalon.", "displayName": "Medium Tip", "locale": "en_US"}],
+      "productID": "com.protomota.opentalon.tip.medium",
+      "referenceName": "Medium Tip",
+      "type": "Consumable"
+    },
+    {
+      "displayPrice": "5.99",
+      "familyShareable": false,
+      "internalID": "16F73CD9-733B-4B28-924E-92FC4D01FBC2",
+      "localizations": [{"description": "An optional one-time tip to support OpenTalon.", "displayName": "Large Tip", "locale": "en_US"}],
+      "productID": "com.protomota.opentalon.tip.large",
+      "referenceName": "Large Tip",
+      "type": "Consumable"
+    }
+  ],
+  "settings": {"_failTransactionsEnabled": false, "_locale": "en_US", "_storefront": "USA", "_storeKitErrors": []},
+  "subscriptionGroups": [],
+  "version": {"major": 3, "minor": 0}
+}

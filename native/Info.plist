@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>CFBundleExecutable</key><string>OpenTalon</string>
+    <key>CFBundleIdentifier</key><string>com.protomota.opentalon.native</string>
+    <key>CFBundleName</key><string>OpenTalon</string>
+    <key>CFBundleDisplayName</key><string>OpenTalon</string>
+    <key>CFBundleIconFile</key><string>opentalon</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>1.0.11</string>
+    <key>CFBundleVersion</key><string>13</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSHumanReadableCopyright</key><string>© Protomota</string>
+    <key>SUFeedURL</key><string>https://opentalon.ai/appcast.xml</string>
+    <key>SUPublicEDKey</key><string>qnauIrFVDBk2mBIlFP1SJolNzykSkZ5r0v5EY+WE8t0=</string>
+    <key>SUEnableAutomaticChecks</key><true/>
+    <key>SUAutomaticallyUpdate</key><true/>
+</dict></plist>

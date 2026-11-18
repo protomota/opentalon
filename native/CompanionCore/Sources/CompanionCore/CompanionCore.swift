@@ -108,7 +108,7 @@ public struct PhoneTask: Codable, Identifiable, Sendable {
             return nil
         }
         let digits = key.dropFirst(4)
-        return key.prefix(4) + String(repeating: "0", count: max(0, 3 - digits.count)) + digits
+        return String(key.prefix(4)) + String(repeating: "0", count: max(0, 3 - digits.count)) + String(digits)
     }
 }
 

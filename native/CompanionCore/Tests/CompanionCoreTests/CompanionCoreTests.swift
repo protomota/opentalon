@@ -2,6 +2,28 @@ import Foundation
 import Testing
 @testable import CompanionCore
 
+@Test func taskOrganizationCapabilityAndRequestsRoundTrip() throws {
+    let workspace = UUID()
+    let legacy = PhoneSnapshot(workspaceID: workspace, revision: 7, projects: [], tasks: [])
+    let current = PhoneSnapshot(workspaceID: workspace, revision: 7, projects: [], tasks: [],
+                                supportsTaskOrganization: true)
+    #expect(!legacy.supportsTaskOrganization)
+    #expect(current.shouldReplace(legacy))
+    #expect(try JSONDecoder().decode(PhoneSnapshot.self, from: JSONEncoder().encode(current)).supportsTaskOrganization)
+    for destination: PhoneRequest.TaskDestination in [.archive, .trash, .active] {
+        let request = PhoneRequest(workspaceID: workspace, action: .organizeTask(taskID: "task", destination: destination))
+        let restored = try JSONDecoder().decode(PhoneRequest.self, from: JSONEncoder().encode(request))
+        #expect(restored.id == request.id)
+        #expect(restored.taskID == "task")
+        #expect(restored.changesTask)
+        guard case .organizeTask(_, let decoded) = restored.action else {
+            Issue.record("Organization request did not round-trip")
+            return
+        }
+        #expect(decoded == destination)
+    }
+}
+
 @MainActor
 @Test func reviewInvitationCanBeRequestedOnceAfterThreeActivities() throws {
     let suite = "OpenTalonReviewTests." + UUID().uuidString

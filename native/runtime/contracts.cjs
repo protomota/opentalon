@@ -309,6 +309,9 @@ const tools = [
   ),
 ]
 const local = [
+  tool('companion_organize_task', 'Apply an explicit companion Archive, Trash or restore action.',
+    { ...write, id, destination: { enum: ['archive', 'trash', 'active'] } },
+    ['id', 'destination', 'requestKey'], true),
   tool('force_complete_task', 'Apply an explicit user override to mark a task Done.', { ...write, id },
     ['id', 'requestKey'], true),
   tool('companion_set_task_field', 'Apply a companion field edit against its last seen value.',

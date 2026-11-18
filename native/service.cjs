@@ -34,7 +34,7 @@ const chatTools = tools.filter(({ name }) => [
 ].includes(name))
 
 async function chat(input) {
-  const { message, history, projectId } = input
+  const { message, history, projectId, agent: selectedAgent } = input
   if (typeof message !== 'string' || !message.trim() || message.length > 4000 ||
       !Array.isArray(history) || history.length > 16 || history.some((entry) =>
         !['user', 'assistant'].includes(entry?.role) || typeof entry.text !== 'string' || entry.text.length > 16000))
@@ -42,7 +42,9 @@ async function chat(input) {
   if (!connector.status().enabled || !connector.status().running)
     throw new AppError('CONNECTION_DISABLED', 'Turn on the local agent connection in Settings to start chatting.')
   const project = store.boards().find(({ id }) => id === projectId)?.name
-  const agent = store.agentSettings().defaultAgent
+  if (selectedAgent !== undefined && selectedAgent !== 'claude-code' && selectedAgent !== 'codex')
+    throw new AppError('INVALID_ARGUMENT', 'Choose Claude or Codex for this chat.')
+  const agent = selectedAgent ?? store.agentSettings().defaultAgent
   const controller = new AbortController()
   chatController = controller
   let directory, chatConnector

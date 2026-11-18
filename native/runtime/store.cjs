@@ -758,6 +758,10 @@ class Store {
     const sending = status === 'Sent to agent' && task.status !== status
     if ((a.agent || a.model || a.dispatchComment !== undefined) && !sending)
       throw new AppError('INVALID_ARGUMENT', 'Agent options and dispatch comments require sending a task.')
+    if (task.archivedAt && a.status !== undefined) {
+      this.db.prepare('UPDATE tasks SET archived_at=NULL WHERE id=?').run(task.id)
+      task = { ...task, archivedAt: null }
+    }
     if (task.archivedAt && status === task.status) {
       if (a.beforeId || a.afterId)
         throw new AppError('INVALID_STATE', 'Reopen the archived task before reordering it.')
@@ -895,6 +899,7 @@ class Store {
       [
         'snapshot',
         'capture_task',
+        'companion_organize_task',
         'import_prototype',
         'get_agent_settings',
         'set_agent_settings',
@@ -1236,6 +1241,29 @@ class Store {
           )
         }
         result = { task }
+      } else if (name === 'companion_organize_task') {
+        let task = this.task(a.id)
+        if (task.deleted) throw new AppError('IN_TRASH', 'Restore the task from Trash first.')
+        if (a.destination === 'active') {
+          if (!task.archivedAt) throw new AppError('INVALID_STATE', 'This task is no longer in Archive.')
+          this.db.prepare('UPDATE tasks SET archived_at=NULL WHERE id=?').run(task.id)
+          task = this.move({ ...task, archivedAt: null }, { status: 'To do' }, revision)
+        } else {
+          for (const job of this.agentJobs()) {
+            if (job.taskId !== task.id || !['queued', 'starting', 'working', 'needs-input'].includes(job.state)) continue
+            this.saveAgentJob({ ...job, state: 'canceled', approval: null,
+              summary: a.destination === 'archive' ? 'Archived by the user.' : 'Moved to Trash by the user.' })
+            this.setCommentDelivery(job.id, 'needs-review')
+          }
+          this.markPendingCommentsForReview(task.id)
+          this.assignAgent(task.id, null)
+          task = this.saveTask(task, revision)
+          const now = new Date().toISOString()
+          if (a.destination === 'archive')
+            this.db.prepare('UPDATE tasks SET archived_at=? WHERE id=?').run(now, task.id)
+          else this.db.prepare('UPDATE tasks SET deleted_at=? WHERE id=?').run(now, task.id)
+        }
+        result = { task: this.task(task.id) }
       } else if (name === 'companion_set_task_field') {
         const task = this.task(a.id)
         if (task.deleted) throw new AppError('IN_TRASH', 'Restore the task before editing it.')
@@ -1629,7 +1657,7 @@ class Store {
           !Number.isFinite(Date.parse(task.updated_at)) ||
           (task.completed_at !== null && (task.status !== 'Done' || typeof task.completed_at !== 'string' ||
             !Number.isFinite(Date.parse(task.completed_at)))) ||
-          (task.archived_at !== null && (task.completed_at === null || typeof task.archived_at !== 'string' ||
+          (task.archived_at !== null && (typeof task.archived_at !== 'string' ||
             !Number.isFinite(Date.parse(task.archived_at)))) ||
           !(
             task.deleted_at === null ||

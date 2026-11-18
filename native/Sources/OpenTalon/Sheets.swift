@@ -738,6 +738,9 @@ private struct ProtomotaProductPill: View {
                         .accessibilityHidden(true)
                 }
                 Text("A Protomota Product").font(.system(size: 13.5, weight: .semibold))
+                Image(systemName: "arrow.up.right")
+                    .font(.caption.weight(.medium))
+                    .accessibilityHidden(true)
             }
             .padding(.leading, 10)
             .padding(.trailing, 16)

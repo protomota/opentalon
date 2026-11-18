@@ -196,7 +196,7 @@ struct SettingsView: View {
     }
 }
 
-private struct RuntimeState: Decodable { let installed: Bool }
+struct RuntimeState: Decodable { let installed: Bool }
 
 struct AgentControls: View {
     @Environment(WorkspaceModel.self) private var model
@@ -263,6 +263,8 @@ struct AgentControls: View {
                         }
                     }
                 }
+                Text("New Codex chats share one project for this folder and appear in Recents.")
+                    .font(.caption).foregroundStyle(palette.muted)
                 if let connection {
                     Toggle("Enable local agent connection", isOn: Binding(
                         get: { connection.enabled },

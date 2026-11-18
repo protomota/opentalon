@@ -159,6 +159,7 @@ public struct PhoneSnapshot: Codable, Sendable {
     private let taskOverrides: Bool?
     private let bulkArchive: Bool?
     private let taskReordering: Bool?
+    private let taskOrganization: Bool?
 
     public init(workspaceID: UUID, revision: Int, updatedAt: Date = .now,
                 projects: [PhoneProject], tasks: [PhoneTask], defaultAgent: PhoneAgent? = nil,
@@ -168,7 +169,7 @@ public struct PhoneSnapshot: Codable, Sendable {
                 supportsDispatchComments: Bool = false, trashedTasks: [PhoneTrashedTask]? = nil,
                 captureProjectID: String? = nil, macName: String? = nil,
                 supportsTaskOverrides: Bool = false, supportsBulkArchive: Bool = false,
-                supportsTaskReordering: Bool = false) {
+                supportsTaskReordering: Bool = false, supportsTaskOrganization: Bool = false) {
         version = 1
         self.workspaceID = workspaceID
         self.revision = revision
@@ -189,6 +190,7 @@ public struct PhoneSnapshot: Codable, Sendable {
         taskOverrides = supportsTaskOverrides ? true : nil
         bulkArchive = supportsBulkArchive ? true : nil
         taskReordering = supportsTaskReordering ? true : nil
+        taskOrganization = supportsTaskOrganization ? true : nil
     }
 
     public var supportsNoteEditing: Bool { noteEditing == true }
@@ -198,8 +200,10 @@ public struct PhoneSnapshot: Codable, Sendable {
     public var supportsTaskOverrides: Bool { taskOverrides == true }
     public var supportsBulkArchive: Bool { bulkArchive == true }
     public var supportsTaskReordering: Bool { taskReordering == true }
+    public var supportsTaskOrganization: Bool { taskOrganization == true }
 
     var projectionVersion: Int {
+        if supportsTaskOrganization { return 14 }
         if supportsTaskReordering { return 13 }
         if supportsBulkArchive { return 12 }
         if supportsTaskOverrides { return 11 }
@@ -261,7 +265,10 @@ public enum PhoneTaskFieldEdit: Codable, Sendable {
 }
 
 public struct PhoneRequest: Codable, Identifiable, Sendable {
+    public enum TaskDestination: String, Codable, Sendable { case archive, trash, active }
+
     public enum Action: Codable, Sendable {
+        case organizeTask(taskID: String, destination: TaskDestination)
         case create(projectID: String, title: String, notes: String, priority: PhoneTask.Priority,
                     sendToAgent: Bool, definitionOfDone: String? = nil, agent: PhoneAgent? = nil, model: String? = nil,
                     dispatchComment: String? = nil, newProjectName: String? = nil)
@@ -296,13 +303,15 @@ public struct PhoneRequest: Codable, Identifiable, Sendable {
         case .create, .emptyTrash, .manageArchive: nil
         case .send(let id, _, _), .complete(let id, _), .comment(let id, _),
              .editNotes(let id, _, _), .editField(let id, _, _), .setField(let id, _, _), .forceComplete(let id),
-             .removeArchived(let id, _, _), .restoreTrashed(let id, _), .reorderTask(let id, _, _, _, _): id
+             .removeArchived(let id, _, _), .restoreTrashed(let id, _), .reorderTask(let id, _, _, _, _),
+             .organizeTask(let id, _): id
         }
     }
 
     public var changesTask: Bool {
         switch action {
-        case .send, .complete, .editNotes, .editField, .setField, .forceComplete, .removeArchived, .restoreTrashed: true
+        case .send, .complete, .editNotes, .editField, .setField, .forceComplete, .removeArchived, .restoreTrashed,
+             .organizeTask: true
         case .create, .comment, .emptyTrash, .manageArchive, .reorderTask: false
         }
     }
@@ -314,12 +323,15 @@ public struct PhoneReceipt: Codable, Equatable, Sendable {
     public let outcome: Outcome
     public let revision: Int?
     public let message: String?
+    public let createdTaskID: String?
 
-    public init(requestID: UUID, outcome: Outcome, revision: Int? = nil, message: String? = nil) {
+    public init(requestID: UUID, outcome: Outcome, revision: Int? = nil, message: String? = nil,
+                createdTaskID: String? = nil) {
         self.requestID = requestID
         self.outcome = outcome
         self.revision = revision
         self.message = message
+        self.createdTaskID = createdTaskID
     }
 
     public func isSettled(at snapshotRevision: Int) -> Bool {

@@ -64,6 +64,7 @@ struct WorkspaceView: View {
                     HStack(spacing: 0) {
                         switch model.page {
                         case .dashboard: DashboardView()
+                        case .recent: RecentTasksView()
                         case .all, .board: KanbanView()
                         case .archive: ArchiveView()
                         case .trash: TrashView()
@@ -116,6 +117,7 @@ struct WorkspaceView: View {
         VStack(alignment: .leading, spacing: 3) {
             nav("Dashboard", "square.grid.2x2", .dashboard)
             nav("All tasks", "list.bullet.rectangle", .all)
+            nav("Recent Tasks", "clock", .recent)
             HStack {
                 Text("Projects").font(.system(size: 12)).foregroundStyle(palette.muted)
                 Spacer()
@@ -181,7 +183,7 @@ struct WorkspaceView: View {
 private struct TaskCreatedToast: View {
     @Environment(WorkspaceModel.self) private var model
     @Environment(\.palette) private var palette
-    @State private var hovered = false
+    @GestureState private var drag = CGFloat.zero
     let task: WorkItem
 
     var body: some View {
@@ -202,12 +204,63 @@ private struct TaskCreatedToast: View {
         .padding(12)
         .surface(12, fill: palette.panel)
         .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
-        .onHover { hovered = $0 }
-        .task(id: hovered) {
-            guard !hovered else { return }
-            do { try await Task.sleep(for: .seconds(8)) } catch { return }
-            if model.createdTask?.id == task.id { model.createdTask = nil }
+        .offset(x: drag)
+        .simultaneousGesture(DragGesture(minimumDistance: 12)
+            .updating($drag) { value, drag, _ in drag = value.translation.width }
+            .onEnded { value in
+                if abs(value.translation.width) > 64, model.createdTask?.id == task.id {
+                    model.createdTask = nil
+                }
+            })
+    }
+}
+
+private struct RecentTasksView: View {
+    @Environment(WorkspaceModel.self) private var model
+    @Environment(\.palette) private var palette
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Text("Recent Tasks").font(palette.display(35)).accessibilityAddTraits(.isHeader)
+                Spacer()
+                SearchField()
+            }
+            let tasks = model.recentTasks
+            if tasks.isEmpty {
+                ContentUnavailableView(model.search.isEmpty ? "No recent tasks" : "No matching tasks", systemImage: "clock")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ThemedScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(tasks) { task in
+                            Button { model.select(task) } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: task.status.symbol).foregroundStyle(palette.accent)
+                                        .accessibilityHidden(true)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(task.title).font(.system(size: 13, weight: .semibold))
+                                        Text("\(model.projectName(task.boardId)) · \(task.status.rawValue)")
+                                            .font(.caption).foregroundStyle(palette.muted)
+                                    }
+                                    Spacer(minLength: 8)
+                                    if let date = task.creationDate {
+                                        Text(date.formatted(date: .abbreviated, time: .shortened))
+                                            .font(.caption).foregroundStyle(palette.muted)
+                                    }
+                                }
+                                .padding(13)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .surface()
+                        }
+                    }
+                }
+            }
         }
+        .padding(28)
     }
 }
 
@@ -318,7 +371,7 @@ private struct ArchiveView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Archive").font(palette.display(35))
-                    Text("Completed tasks move here after seven days.")
+                    Text("Tasks you archive appear here. Completed tasks also move here after seven days.")
                         .font(.system(size: 12)).foregroundStyle(palette.muted)
                 }
                 Spacer()

@@ -4,7 +4,7 @@ const path = require('node:path')
 const readline = require('node:readline')
 const { spawn, execFile } = require('node:child_process')
 const { promisify } = require('node:util')
-const { randomUUID } = require('node:crypto')
+const { createHash, randomUUID } = require('node:crypto')
 const { AppError } = require('./contracts.cjs')
 const run = promisify(execFile)
 const activeStates = ['queued', 'starting', 'working', 'needs-input']
@@ -54,6 +54,14 @@ function environment() {
   return env
 }
 
+function chatFailure(agent, diagnostic) {
+  if (/(failed to authenticate|oauth session expired|not logged in|not signed in|authentication (?:failed|required)|please run \/login|please log in)/i.test(diagnostic)) {
+    const command = agent === 'claude-code' ? 'claude auth login' : 'codex login'
+    return new AppError('CHAT_AUTH_REQUIRED', `${names[agent]} needs you to sign in again. Run ${command} in Terminal, then retry your prompt.`)
+  }
+  return new AppError('CHAT_FAILED', `${names[agent]} couldn’t finish this reply. Review the chat for any completed changes before trying again.`)
+}
+
 async function askAgent(agent, { directory, config, message, history, project, signal }) {
   const file = executable(agent)
   if (!file) throw new AppError('AGENT_MISSING', `Install and sign in to ${names[agent]} to use Ask my agent.`)
@@ -87,11 +95,13 @@ The current project, if any, is context only. Use it when the user refers to thi
     request.child.stdin.end(prompt)
     const { stdout } = await request
     const response = output ? null : JSON.parse(stdout)
-    const result = output ? await fs.promises.readFile(output, 'utf8') : response.is_error ? null : response.result
+    if (response?.is_error) throw chatFailure(agent, response.result ?? '')
+    const result = output ? await fs.promises.readFile(output, 'utf8') : response.result
     if (typeof result !== 'string' || !result.trim()) throw new Error('Empty agent reply')
     return { text: result.trim().slice(0, 16000) }
-  } catch {
-    throw new AppError('CHAT_FAILED', `${names[agent]} couldn’t finish this reply. Check that it’s signed in and review the activity before trying again.`)
+  } catch (error) {
+    if (error instanceof AppError) throw error
+    throw chatFailure(agent, [error.stderr, error.stdout].filter(Boolean).join('\n'))
   }
 }
 
@@ -222,7 +232,7 @@ class JsonProcess {
         const error =
           message.error ||
           (message.response?.subtype === 'error' && { message: message.response.error })
-        if (error) pending.reject(new Error(error.message))
+        if (error) pending.reject(Object.assign(new Error(error.message), { code: error.code }))
         else pending.resolve(message.result ?? message.response?.response)
       } else
         this.events = this.events.then(() => onMessage(message)).catch((error) => onExit(error))
@@ -549,18 +559,25 @@ class AgentRunner {
     this.current.process = transport
     await transport.request('initialize', {
       clientInfo: { name: 'opentalon', version: '0.1.0' },
-      capabilities: {},
+      capabilities: { experimentalApi: true },
     })
     transport.write({ method: 'initialized', params: {} })
+    const cwd = job.resumeThread ? job.workingFolder : fs.realpathSync(job.workingFolder)
+    const projectId = job.resumeThread
+      ? null
+      : await this.codexProject(transport, cwd, job.workingFolder)
     const result = await transport.request(job.resumeThread ? 'thread/resume' : 'thread/start', {
       ...(job.resumeThread ? { threadId: job.threadId, excludeTurns: true } : { ephemeral: false }),
-      cwd: job.workingFolder,
+      ...(projectId ? { projectId, runtimeWorkspaceRoots: [cwd] } : {}),
+      cwd,
       approvalPolicy: fullAccess ? 'never' : 'on-request',
       approvalsReviewer: permission === 'auto' ? 'auto_review' : 'user',
       sandbox: fullAccess ? 'danger-full-access' : 'workspace-write',
       serviceName: 'opentalon',
     })
     const threadId = result.thread.id
+    if (projectId && result.thread.projectId !== projectId)
+      throw new Error('Codex did not add the new chat to the selected working folder’s project.')
     if (job.resumeThread && threadId !== job.threadId)
       throw new Error(
         'Codex did not resume the original conversation. Review it before resending the comments.'
@@ -572,6 +589,30 @@ class AgentRunner {
       ...(job.model ? { model: job.model } : {}),
       input: this.turnInput(task, job, 'codex'),
     })
+  }
+  async codexProject(transport, cwd, selectedFolder) {
+    let cursor
+    do {
+      const projects = await transport.request('project/list', { limit: 100, cursor }).catch((error) => {
+        // Older Codex launchers can still open saved chats in the configured folder.
+        if (error.code === -32601 || (error.code === -32600 && /unknown variant .*project\/list/i.test(error.message)))
+          return null
+        throw error
+      })
+      if (!projects) return null
+      const matching = projects.data.find((project) => project.roots.some((root) =>
+        root.path === cwd || root.path === selectedFolder))
+      if (matching) return matching.id
+      cursor = projects.nextCursor
+    } while (cursor)
+    // The key also covers a retry after Codex saved the project but lost the reply.
+    const key = createHash('sha256').update(cwd).digest('hex')
+    const { project } = await transport.request('project/create', {
+      name: 'OpenTalon',
+      roots: [{ path: cwd }],
+      idempotencyKey: `opentalon:${key}`,
+    })
+    return project.id
   }
   turnInput(task, job, agent) {
     const comments = job.resumeThread

@@ -288,8 +288,10 @@ struct CompanionHome: View {
 
     @Environment(PhoneWorkspace.self) private var workspace
     @Environment(\.colorScheme) private var systemScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("appearanceTheme") private var theme = OpenTalonTheme.system
-    @State private var quickAdd = false
+    @State private var showAddTask = false
+    @State private var openedTask: PhoneWorkspace.CapturedTask?
     @State private var page = Page.today
 
     var body: some View {
@@ -300,12 +302,13 @@ struct CompanionHome: View {
                     TodayView()
                         .navigationTitle("Today")
                         .toolbar { controls }
-                        .modifier(PhoneReviewPrompt(isSelected: page == .today && !quickAdd))
+                        .modifier(PhoneReviewPrompt(isSelected: page == .today && !showAddTask))
                 } else {
                     syncUnavailable(colors: colors)
                 }
             }
             .tint(colors.text)
+            .safeAreaInset(edge: .bottom, spacing: 0) { taskToast }
             .tabItem { tabLabel("Today", systemImage: "sun.max", destination: .today, colors: colors) }
             .tag(Page.today)
 
@@ -316,10 +319,11 @@ struct CompanionHome: View {
                     ProjectsView()
                         .navigationTitle("Projects")
                         .toolbar { controls }
-                        .modifier(PhoneReviewPrompt(isSelected: page == .projects && !quickAdd))
+                        .modifier(PhoneReviewPrompt(isSelected: page == .projects && !showAddTask))
                 }
             }
             .tint(colors.text)
+            .safeAreaInset(edge: .bottom, spacing: 0) { taskToast }
             .tabItem { tabLabel("Projects", systemImage: "square.grid.2x2", destination: .projects, colors: colors) }
             .tag(Page.projects)
 
@@ -327,9 +331,10 @@ struct CompanionHome: View {
                 QueueView()
                     .navigationTitle("Queue")
                     .toolbar { controls }
-                    .modifier(PhoneReviewPrompt(isSelected: page == .queue && !quickAdd))
+                    .modifier(PhoneReviewPrompt(isSelected: page == .queue && !showAddTask))
             }
             .tint(colors.text)
+            .safeAreaInset(edge: .bottom, spacing: 0) { taskToast }
             .tabItem { tabLabel("Queue", systemImage: "paperplane", destination: .queue, colors: colors) }
             .tag(Page.queue)
             .badge(workspace.pending.count)
@@ -339,12 +344,39 @@ struct CompanionHome: View {
                     .navigationTitle("Settings")
             }
             .tint(colors.text)
+            .safeAreaInset(edge: .bottom, spacing: 0) { taskToast }
             .tabItem { tabLabel("Settings", systemImage: "gearshape", destination: .settings, colors: colors) }
             .tag(Page.settings)
         }
-        .sheet(isPresented: $quickAdd) { CaptureView().tint(colors.text) }
+        .sheet(isPresented: $showAddTask) { CaptureView().tint(colors.text) }
+        .sheet(item: $openedTask) { task in
+            NavigationStack {
+                CapturedTaskDetail(task: task)
+                    .toolbar {
+                        PhoneActionToolbarItem(placement: .topBarTrailing) {
+                            Button("Close") { openedTask = nil }
+                        }
+                    }
+            }
+            .tint(colors.text)
+        }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: workspace.capturedTask?.dismissed)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: workspace.capturedTask?.id)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: showAddTask)
         .environment(\.phoneColors, colors)
         .tint(colors.actionAccent)
+    }
+
+    @ViewBuilder
+    private var taskToast: some View {
+        if let task = workspace.capturedTask, !task.dismissed, !showAddTask {
+            PhoneCreatedTaskToast(task: task) { openedTask = task }
+                .id(task.id)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+        }
     }
 
     private func tabLabel(_ title: LocalizedStringKey, systemImage: String, destination: Page,
@@ -397,7 +429,7 @@ struct CompanionHome: View {
     private var controls: some ToolbarContent {
         PhoneActionToolbarItem(placement: .primaryAction) {
             Button {
-                quickAdd = true
+                showAddTask = true
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 19, weight: .semibold))
@@ -406,6 +438,109 @@ struct CompanionHome: View {
             .buttonStyle(PhoneActionButtonStyle(circular: true))
             .accessibilityLabel("New task")
             .disabled(workspace.snapshot?.projects.isEmpty != false)
+        }
+    }
+}
+
+private struct PhoneCreatedTaskToast: View {
+    @Environment(PhoneWorkspace.self) private var workspace
+    @Environment(\.phoneColors) private var colors
+    @GestureState private var drag = CGSize.zero
+    let task: PhoneWorkspace.CapturedTask
+    let open: () -> Void
+
+    private var status: (title: String, symbol: String, color: Color) {
+        switch task.result {
+        case .queued: ("Task queued", "clock", colors.actionAccent)
+        case .saved: ("Task created", "checkmark.circle.fill", colors.actionAccent)
+        case .rejected: ("Task couldn’t sync", "exclamationmark.circle", colors.danger)
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: status.symbol).foregroundStyle(status.color).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(status.title).font(.subheadline.weight(.semibold))
+                Text(task.title).font(.caption).foregroundStyle(colors.muted).lineLimit(2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Open task", action: open)
+                .fixedSize(horizontal: true, vertical: false)
+                .buttonStyle(PhoneActionButtonStyle(horizontalPadding: 18))
+                .accessibilityIdentifier("openCapturedTask")
+            Button {
+                workspace.dismissCapturedTask(task.id)
+            } label: {
+                Image(systemName: "xmark").font(.caption.weight(.semibold))
+            }
+            .buttonStyle(PhoneActionButtonStyle(circular: true))
+            .accessibilityLabel("Dismiss task notification")
+        }
+        .foregroundStyle(colors.text)
+        .padding(10)
+        .frame(maxWidth: 420)
+        .background(colors.card, in: .rect(cornerRadius: 17))
+        .overlay {
+            RoundedRectangle(cornerRadius: 17).strokeBorder(colors.line).allowsHitTesting(false)
+        }
+        .shadow(color: .black.opacity(0.14), radius: 12, y: 4)
+        .offset(x: drag.width, y: drag.height)
+        .simultaneousGesture(DragGesture(minimumDistance: 12)
+            .updating($drag) { value, drag, _ in drag = value.translation }
+            .onEnded { value in
+                if abs(value.translation.width) > 64 || abs(value.translation.height) > 42 {
+                    workspace.dismissCapturedTask(task.id)
+                }
+            })
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("taskCreatedToast")
+    }
+}
+
+private struct CapturedTaskDetail: View {
+    @Environment(PhoneWorkspace.self) private var workspace
+    @Environment(\.phoneColors) private var colors
+    let task: PhoneWorkspace.CapturedTask
+
+    var body: some View {
+        let current = workspace.capturedTask.flatMap { $0.id == task.id ? $0 : nil } ?? task
+        if case .saved(let id?) = current.result {
+            TaskView(taskID: id)
+        } else {
+            List {
+                Section {
+                    Text(current.title).font(.title2.weight(.semibold))
+                    LabeledContent("Project", value: current.project)
+                    LabeledContent("Priority", value: current.priority.title)
+                }
+                .listRowBackground(colors.card)
+                if !current.notes.isEmpty {
+                    Section("Notes") { Text(current.notes).textSelection(.enabled) }
+                        .listRowBackground(colors.card)
+                }
+                if let definition = current.definitionOfDone, !definition.isEmpty {
+                    Section("Definition of done") { Text(definition).textSelection(.enabled) }
+                        .listRowBackground(colors.card)
+                }
+                Section {
+                    switch current.result {
+                    case .queued:
+                        Label("Waiting to sync with your Mac", systemImage: "clock")
+                            .foregroundStyle(colors.muted)
+                    case .saved:
+                        Label("Synced. Find the task in Recent Tasks.", systemImage: "checkmark.circle")
+                            .foregroundStyle(colors.muted)
+                    case .rejected(let message):
+                        Label(message, systemImage: "exclamationmark.circle")
+                            .foregroundStyle(colors.danger)
+                    }
+                }
+                .listRowBackground(colors.card)
+            }
+            .modifier(PhoneListAppearance())
+            .navigationTitle("Task")
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }
@@ -684,6 +819,9 @@ private struct SyncSettingsView: View {
                     .clipShape(.rect(cornerRadius: 6))
                     .accessibilityHidden(true)
                 Text("A Protomota Product").font(.subheadline.weight(.semibold))
+                Image(systemName: "arrow.up.right")
+                    .font(.caption.weight(.medium))
+                    .accessibilityHidden(true)
             }
             .padding(.leading, 10)
             .padding(.trailing, 16)
@@ -1082,8 +1220,8 @@ private struct PhoneArchiveView: View {
         let snapshot = workspace.snapshot
         let permanently = preview?.permanently == true
         let removals = workspace.pendingArchiveRemovals
-        let archived = (snapshot?.tasks ?? []).filter {
-            $0.archivedAt != nil && (projectID == nil || workspace.displayedProject(for: $0) == projectID)
+        let archived = workspace.visibleTasks.filter {
+            workspace.isArchived($0) && (projectID == nil || workspace.displayedProject(for: $0) == projectID)
         }
         let tasks = archived.filter { removals[$0.id] == nil }
             .sorted { ($0.archivedAt ?? .distantPast) > ($1.archivedAt ?? .distantPast) }
@@ -1154,23 +1292,18 @@ private enum TodayCoordinateSpace: Hashable {
     case list
 }
 
-private enum TodayField: Hashable {
-    case idea, search
-}
-
 private struct TodayView: View {
     @Environment(PhoneWorkspace.self) private var workspace
     @Environment(\.phoneColors) private var colors
-    @FocusState private var focusedField: TodayField?
-    @State private var ideaFrame = CGRect.null
+    @FocusState private var searchFocused: Bool
     @State private var searchFrame = CGRect.null
     @State private var search = ""
 
     var body: some View {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         let projects = Dictionary(uniqueKeysWithValues: (workspace.snapshot?.projects ?? []).map { ($0.id, $0.name) })
-        let active = workspace.orderedTasks((workspace.snapshot?.tasks ?? []).filter {
-            $0.archivedAt == nil && workspace.displayedStatus(for: $0) != .done &&
+        let active = workspace.orderedTasks(workspace.visibleTasks.filter {
+            !workspace.isArchived($0) && workspace.displayedStatus(for: $0) != .done &&
                 (query.isEmpty || [$0.title, workspace.hasPendingProjectMove(for: $0) ? "" : $0.displayTaskID ?? "",
                                    projects[workspace.displayedProject(for: $0)] ?? "", $0.notes]
                     .contains { $0.localizedStandardContains(query) })
@@ -1178,17 +1311,20 @@ private struct TodayView: View {
         let urgent = active.filter { workspace.displayedPriority(for: $0) == .urgent }
         let other = active.filter { workspace.displayedPriority(for: $0) != .urgent }
         List {
-            if let snapshot = workspace.snapshot, !snapshot.projects.isEmpty {
-                TodayCapture(projects: snapshot.projects, workspaceID: snapshot.workspaceID,
-                             ideaFrame: $ideaFrame, focusedField: $focusedField)
-                    .id(snapshot.workspaceID)
-            }
             if let updated = workspace.snapshot?.updatedAt {
                 Text("Mac snapshot \(updated.formatted(.relative(presentation: .named)))")
                     .font(.footnote).foregroundStyle(.secondary)
                     .listRowBackground(colors.card)
             }
             searchRow
+            Section {
+                NavigationLink {
+                    PhoneRecentTasks()
+                } label: {
+                    PhoneActionLabel(title: "Recent Tasks", systemImage: "clock")
+                }
+            }
+            .listRowBackground(colors.card)
             if let notice = workspace.pickupNotice {
                 PhonePickupNotice(message: notice).listRowBackground(colors.card)
             }
@@ -1238,9 +1374,9 @@ private struct TodayView: View {
         .coordinateSpace(name: TodayCoordinateSpace.list)
         .simultaneousGesture(
             SpatialTapGesture(coordinateSpace: .named(TodayCoordinateSpace.list)).onEnded { tap in
-                if !ideaFrame.contains(tap.location), !searchFrame.contains(tap.location) { focusedField = nil }
+                if !searchFrame.contains(tap.location) { searchFocused = false }
             },
-            including: focusedField == nil ? .none : .all
+            including: searchFocused ? .all : .none
         )
     }
 
@@ -1252,9 +1388,9 @@ private struct TodayView: View {
             TextField("Search tasks", text: $search)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                .focused($focusedField, equals: .search)
+                .focused($searchFocused)
                 .submitLabel(.search)
-                .onSubmit { focusedField = nil }
+                .onSubmit { searchFocused = false }
             if !search.isEmpty {
                 Button {
                     search = ""
@@ -1272,114 +1408,39 @@ private struct TodayView: View {
     }
 }
 
-private struct TodayCapture: View {
+private struct PhoneRecentTasks: View {
     @Environment(PhoneWorkspace.self) private var workspace
     @Environment(\.phoneColors) private var colors
-    @State private var idea = ""
-    @State private var priority: PhoneTask.Priority?
-    @State private var selectedProject: String?
-    @State private var saving = false
-    @State private var feedback: String?
-    @State private var failed = false
-
-    let projects: [PhoneProject]
-    let workspaceID: UUID
-    @Binding var ideaFrame: CGRect
-    @FocusState.Binding var focusedField: TodayField?
-
-    private var input: String { idea.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var tooLong: Bool { input.utf16.count > SuggestedTaskDetails.captureLimit }
-    private var project: String {
-        let fallback = selectedProject ?? workspace.snapshot?.captureProjectID
-        return projects.first { $0.id == fallback }?.id ?? projects.first?.id ?? ""
-    }
 
     var body: some View {
-        Section {
-            TextField("Type or dictate a to-do", text: $idea, axis: .vertical)
-                .lineLimit(2...5)
-                .focused($focusedField, equals: .idea)
-                .onGeometryChange(for: CGRect.self) { geometry in
-                    geometry.frame(in: .named(TodayCoordinateSpace.list))
-                } action: { ideaFrame = $0 }
-                .accessibilityLabel("To-do idea")
-                .disabled(saving)
-            Picker("Project", selection: $selectedProject) {
-                Text("Auto").tag(nil as String?)
-                ForEach(projects) { Text($0.name).tag(Optional($0.id)) }
-            }
-            .disabled(saving)
-            Picker("Priority", selection: $priority) {
-                Text("Auto").tag(nil as PhoneTask.Priority?)
-                ForEach(PhoneTask.Priority.allCases) { Text($0.title).tag(Optional($0)) }
-            }
-            .disabled(saving)
-            Button(action: add) {
-                if saving {
-                    ProgressView("Drafting on this device…")
-                } else {
-                    PhoneActionLabel(title: "Add to-do", systemImage: "plus")
+        let recent = workspace.newestTasks(workspace.visibleTasks.filter { !workspace.isArchived($0) })
+        let pending = workspace.capturedTask.flatMap { task in
+            if case .queued = task.result { return task }
+            return nil
+        }
+        List {
+            if let pending {
+                NavigationLink {
+                    CapturedTaskDetail(task: pending)
+                } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(pending.title).font(.body.weight(.semibold))
+                        Label("Waiting to sync · \(pending.project)", systemImage: "clock")
+                            .font(.caption).foregroundStyle(colors.muted)
+                    }
                 }
+                .listRowBackground(colors.card)
             }
-            .buttonStyle(PhoneActionButtonStyle())
-            .disabled(input.isEmpty || tooLong || project.isEmpty || saving)
-        } header: {
-            Text("Quick add")
-        } footer: {
-            if tooLong {
-                Text("Keep your idea to 2,000 characters.").foregroundStyle(colors.danger)
-            } else if let feedback {
-                Text(feedback).foregroundStyle(failed ? colors.danger : colors.muted)
-                    .accessibilityAddTraits(.updatesFrequently)
+            if recent.isEmpty && pending == nil {
+                ContentUnavailableView("No recent tasks", systemImage: "clock")
+                    .listRowBackground(colors.card)
+            } else {
+                ForEach(recent) { TaskLink(task: $0, showProject: true, showStatus: true) }
             }
         }
-        .listRowBackground(colors.card)
-    }
-
-    private func add() {
-        guard !input.isEmpty, !tooLong, !project.isEmpty, !saving else { return }
-        let idea = input
-        let project = project
-        let autoProject = selectedProject == nil
-        let priority = priority
-        focusedField = nil
-        saving = true
-        failed = false
-        feedback = nil
-        Task {
-            defer { saving = false }
-            let suggestion = try? await TaskDrafting.expand(idea, projects: autoProject ? projects : nil)
-            let generated = suggestion.flatMap { $0.isUsableForCapture ? $0 : nil }
-            let draft = generated ?? .fromIdea(idea)
-            guard let snapshot = workspace.snapshot, snapshot.workspaceID == workspaceID else { return }
-            let destination = autoProject
-                ? TaskDrafting.captureDestination(in: idea, projects: snapshot.projects, suggestedName: suggestion?.projectName)
-                : (projectID: nil, newProjectName: nil)
-            let resolvedPriority = priority ?? TaskDrafting.capturePriority(in: idea)
-            if destination.newProjectName != nil, snapshot.captureProjectID == nil {
-                failed = true
-                feedback = "Update OpenTalon on your Mac to create a new project from Quick Add."
-                return
-            }
-            do {
-                try workspace.queue(.create(
-                    projectID: destination.projectID ?? project, title: draft.title, notes: draft.notes,
-                    priority: resolvedPriority, sendToAgent: false, definitionOfDone: generated?.definitionOfDone,
-                    newProjectName: destination.newProjectName
-                ))
-                self.idea = ""
-                self.priority = nil
-                self.selectedProject = nil
-                let destinationName = destination.newProjectName
-                    ?? workspace.projectName(destination.projectID ?? project)
-                feedback = generated == nil
-                    ? "Queued for \(destinationName) · \(resolvedPriority.title). Apple Intelligence drafting was unavailable."
-                    : "Queued for \(destinationName) · \(resolvedPriority.title)."
-            } catch {
-                failed = true
-                feedback = error.localizedDescription
-            }
-        }
+        .modifier(PhoneListAppearance())
+        .navigationTitle("Recent Tasks")
+        .refreshable { await workspace.sync() }
     }
 }
 
@@ -1503,17 +1564,23 @@ private struct ProjectsView: View {
     }
 
     private func openCount(for project: PhoneProject) -> Int {
-        workspace.snapshot?.tasks.filter {
-            workspace.displayedProject(for: $0) == project.id && workspace.displayedStatus(for: $0) != .done
-        }.count ?? 0
+        workspace.visibleTasks.filter {
+            !workspace.isArchived($0) && workspace.displayedProject(for: $0) == project.id && workspace.displayedStatus(for: $0) != .done
+        }.count
     }
 }
 
 private struct ProjectTasks: View {
     private enum Sort: String, CaseIterable {
-        case defaultOrder, urgency
+        case defaultOrder, urgency, newest
 
-        var title: String { self == .defaultOrder ? "My order" : "Urgency" }
+        var title: String {
+            switch self {
+            case .defaultOrder: "My order"
+            case .urgency: "Urgency"
+            case .newest: "Newest"
+            }
+        }
     }
 
     @Environment(PhoneWorkspace.self) private var workspace
@@ -1538,9 +1605,9 @@ private struct ProjectTasks: View {
 
     var body: some View {
         let snapshot = workspace.snapshot
-        let projectTasks = (snapshot?.tasks ?? []).filter { workspace.displayedProject(for: $0) == project.id }
-        let tasks = projectTasks.filter { $0.archivedAt == nil }
-        let archived = projectTasks.filter { $0.archivedAt != nil }
+        let projectTasks = workspace.visibleTasks.filter { workspace.displayedProject(for: $0) == project.id }
+        let tasks = projectTasks.filter { !workspace.isArchived($0) }
+        let archived = projectTasks.filter { workspace.isArchived($0) }
         GeometryReader { geometry in
             if geometry.size.width >= 640 && !dynamicTypeSize.isAccessibilitySize, let snapshot {
                 board(snapshot: snapshot, tasks: tasks, archived: archived, width: geometry.size.width)
@@ -1616,7 +1683,7 @@ private struct ProjectTasks: View {
         Button {
             showSort = true
         } label: {
-            PhoneActionLabel(title: sort == .urgency ? "Urgency" : "My order", systemImage: "arrow.up.arrow.down")
+            PhoneActionLabel(title: LocalizedStringKey(sort.title), systemImage: "arrow.up.arrow.down")
         }
         .buttonStyle(PhoneActionButtonStyle())
         .accessibilityLabel("Sort tasks")
@@ -1675,7 +1742,7 @@ private struct ProjectTasks: View {
             ScrollView(.horizontal) {
                 HStack(spacing: 12) {
                     ForEach(statuses, id: \.self) { status in
-                        statusColumn(status, tasks: tasks, in: snapshot)
+                        statusColumn(status, tasks: tasks, in: snapshot, laneWidth: laneWidth)
                             .frame(width: laneWidth)
                             .frame(maxHeight: .infinity, alignment: .top)
                     }
@@ -1690,6 +1757,7 @@ private struct ProjectTasks: View {
 
     private func items(for status: PhoneTask.Status, in tasks: [PhoneTask]) -> [PhoneTask] {
         let matching = tasks.filter { workspace.displayedStatus(for: $0) == status }
+        if sort == .newest { return workspace.newestTasks(matching) }
         if sort == .urgency { return workspace.orderedTasks(matching, byPriority: true) }
         if canReorder { return workspace.manualTaskOrder(matching, projectID: project.id, status: status) }
         return status == .todo ? workspace.orderedTasks(matching) : matching
@@ -1719,7 +1787,8 @@ private struct ProjectTasks: View {
         }
     }
 
-    private func statusColumn(_ status: PhoneTask.Status, tasks: [PhoneTask], in snapshot: PhoneSnapshot) -> some View {
+    private func statusColumn(_ status: PhoneTask.Status, tasks: [PhoneTask], in snapshot: PhoneSnapshot,
+                              laneWidth: CGFloat) -> some View {
         let items = items(for: status, in: tasks)
         let targeted = highlightedLane == status
         return VStack(alignment: .leading, spacing: 8) {
@@ -1732,28 +1801,31 @@ private struct ProjectTasks: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(items) { task in
-                        let card = VStack(alignment: .leading, spacing: 6) {
+                        let card = boardCard(task) {
                             TaskLink(task: task, showProject: false)
                                 .buttonStyle(.plain)
                                 .accessibilityIdentifier("boardCard-\(task.id)")
-                            if workspace.displayedStatus(for: task) != task.status {
-                                Label("Queued for Mac", systemImage: "clock")
-                                    .font(.caption)
-                                    .foregroundStyle(colors.muted)
+                        }
+                        .overlay {
+                            if highlightedTaskID == task.id {
+                                RoundedRectangle(cornerRadius: 12).strokeBorder(colors.actionAccent)
+                                    .allowsHitTesting(false)
                             }
                         }
-                            .padding(10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(colors.card, in: .rect(cornerRadius: 12))
-                            .overlay {
-                                if highlightedTaskID == task.id {
-                                    RoundedRectangle(cornerRadius: 12).strokeBorder(colors.actionAccent)
-                                        .allowsHitTesting(false)
-                                }
-                            }
                         if snapshot.supportsFieldEditing,
                            snapshot.supportsTaskOverrides || workspace.pendingTaskChange(for: task.id) == nil {
-                            let draggableCard = card.draggable(BoardTaskDrag(workspaceID: snapshot.workspaceID, taskID: task.id))
+                            let draggableCard = card
+                                .contentShape(.interaction, RoundedRectangle(cornerRadius: 12))
+                                .draggable(BoardTaskDrag(workspaceID: snapshot.workspaceID, taskID: task.id)) {
+                                    boardCard(task) {
+                                        TaskCardLabel(task: task, showProject: false, showStatus: false)
+                                    }
+                                    .frame(width: laneWidth - 24)
+                                    .foregroundStyle(colors.text)
+                                    .environment(workspace)
+                                    .environment(\.phoneColors, colors)
+                                    .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 12))
+                                }
                             if canReorder {
                                 draggableCard
                                     .onDrop(of: [BoardTaskDrag.contentType], isTargeted: Binding(
@@ -1804,6 +1876,20 @@ private struct ProjectTasks: View {
         }
     }
 
+    private func boardCard<Content: View>(_ task: PhoneTask, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            content()
+            if workspace.displayedStatus(for: task) != task.status {
+                Label("Queued for Mac", systemImage: "clock")
+                    .font(.caption)
+                    .foregroundStyle(colors.muted)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(colors.card, in: .rect(cornerRadius: 12))
+    }
+
     private func handleDrop(_ providers: [NSItemProvider], to status: PhoneTask.Status,
                             anchorID: String? = nil) -> Bool {
         guard let provider = providers.first else { return false }
@@ -1823,12 +1909,12 @@ private struct ProjectTasks: View {
         guard let snapshot = workspace.snapshot, snapshot.workspaceID == payload.workspaceID,
               snapshot.supportsFieldEditing,
               let task = snapshot.tasks.first(where: {
-                  $0.id == payload.taskID && $0.archivedAt == nil && workspace.displayedProject(for: $0) == project.id
+                  $0.id == payload.taskID && !workspace.isArchived($0) && !workspace.isTrashed($0) && workspace.displayedProject(for: $0) == project.id
               }) else { return }
         if workspace.displayedStatus(for: task) == status {
             guard canReorder else { return }
             let column = items(for: status, in: snapshot.tasks.filter {
-                $0.archivedAt == nil && workspace.displayedProject(for: $0) == project.id
+                !workspace.isArchived($0) && !workspace.isTrashed($0) && workspace.displayedProject(for: $0) == project.id
             })
             if let targetID = anchorID ?? column.last?.id,
                let source = column.firstIndex(where: { $0.id == task.id }),
@@ -2041,7 +2127,6 @@ private struct BoardTaskDrag: Codable, Identifiable, Transferable {
 private struct TaskLink: View {
     @Environment(PhoneWorkspace.self) private var workspace
     @Environment(\.phoneColors) private var colors
-    @Environment(\.colorScheme) private var scheme
     @State private var completionError: String?
     @State private var confirmCompletion = false
     let task: PhoneTask
@@ -2053,40 +2138,7 @@ private struct TaskLink: View {
         NavigationLink {
             TaskView(taskID: task.id)
         } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(task.title).font(.body.weight(.semibold))
-                if workspace.hasPendingProjectMove(for: task) {
-                    Text("New task ID syncing…").font(.caption).foregroundStyle(colors.muted)
-                } else if let taskKey = task.displayTaskID {
-                    Text(taskKey).font(.system(.subheadline, design: .monospaced).weight(.medium))
-                        .foregroundStyle(colors.text)
-                        .accessibilityLabel("Task ID \(taskKey)")
-                }
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { metadata }
-                        .fixedSize(horizontal: true, vertical: false)
-                    VStack(alignment: .leading, spacing: 4) { metadata }
-                }
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(colors.text)
-                if showStatus {
-                    let status = workspace.displayedStatus(for: task)
-                    Label(status.mobileStage, systemImage: status.mobileStageIcon)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(colors.text)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(colors.actionAccent.opacity(0.10), in: Capsule())
-                        .accessibilityIdentifier("taskStage-\(task.id)")
-                }
-                if let date = task.createdAt {
-                    Text("Created \(date.formatted(date: .abbreviated, time: .omitted))")
-                        .font(.subheadline).foregroundStyle(colors.muted)
-                }
-            }
-            .padding(.vertical, 3)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
+            TaskCardLabel(task: task, showProject: showProject, showStatus: showStatus)
         }
         .listRowBackground(colors.card)
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -2120,6 +2172,52 @@ private struct TaskLink: View {
     private func markDone() {
         do { try workspace.markDone(task) }
         catch { completionError = error.localizedDescription }
+    }
+}
+
+private struct TaskCardLabel: View {
+    @Environment(PhoneWorkspace.self) private var workspace
+    @Environment(\.phoneColors) private var colors
+    @Environment(\.colorScheme) private var scheme
+    let task: PhoneTask
+    let showProject: Bool
+    let showStatus: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(task.title).font(.body.weight(.semibold))
+            if workspace.hasPendingProjectMove(for: task) {
+                Text("New task ID syncing…").font(.caption).foregroundStyle(colors.muted)
+            } else if let taskKey = task.displayTaskID {
+                Text(taskKey).font(.system(.subheadline, design: .monospaced).weight(.medium))
+                    .foregroundStyle(colors.text)
+                    .accessibilityLabel("Task ID \(taskKey)")
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { metadata }
+                    .fixedSize(horizontal: true, vertical: false)
+                VStack(alignment: .leading, spacing: 4) { metadata }
+            }
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(colors.text)
+            if showStatus {
+                let status = workspace.displayedStatus(for: task)
+                Label(status.mobileStage, systemImage: status.mobileStageIcon)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(colors.text)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(colors.actionAccent.opacity(0.10), in: Capsule())
+                    .accessibilityIdentifier("taskStage-\(task.id)")
+            }
+            if let date = task.createdAt {
+                Text("Created \(date.formatted(date: .abbreviated, time: .omitted))")
+                    .font(.subheadline).foregroundStyle(colors.muted)
+            }
+        }
+        .padding(.vertical, 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder private var metadata: some View {
@@ -2204,6 +2302,9 @@ private struct DueDateEdit: Identifiable {
 }
 
 private struct TaskView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmTrash = false
+    @State private var confirmArchive = false
     @State private var confirmArchiveDeletion = false
     @State private var confirmForceComplete = false
     @Environment(PhoneWorkspace.self) private var workspace
@@ -2267,6 +2368,33 @@ private struct TaskView: View {
                         .listRowBackground(colors.card)
                 }
                 comments(for: task)
+                if !workspace.isArchived(task) {
+                    Section {
+                        Button { confirmArchive = true } label: {
+                            PhoneActionLabel(title: "Archive task", systemImage: "archivebox")
+                        }
+                        .accessibilityIdentifier("taskArchive")
+                        Button { confirmTrash = true } label: {
+                            PhoneActionLabel(title: "Send to Trash", systemImage: "trash")
+                        }
+                        .accessibilityIdentifier("taskTrash")
+                    } footer: {
+                        Text(snapshot.supportsTaskOrganization
+                             ? "Archived tasks stay in Archive. Trashed tasks can be restored from Trash."
+                             : "Update OpenTalon on your Mac and sync to use these actions.")
+                    }
+                    .disabled(!snapshot.supportsTaskOrganization)
+                    .listRowBackground(colors.card)
+                } else if snapshot.supportsTaskOrganization {
+                    Section {
+                        Button { organize(task, destination: .active) } label: {
+                            PhoneActionLabel(title: "Restore to To Do", systemImage: "arrow.uturn.backward")
+                        }
+                        .accessibilityIdentifier("taskRestoreArchive")
+                    }
+                    .disabled(workspace.pendingTaskChange(for: task.id) != nil)
+                    .listRowBackground(colors.card)
+                }
                 if task.archivedAt != nil, snapshot.trashedTasks != nil {
                     Section {
                         Button(role: .destructive) {
@@ -2292,6 +2420,18 @@ private struct TaskView: View {
             }
             .navigationTitle("Task")
             .navigationBarTitleDisplayMode(.inline)
+            .phoneConfirmation("Archive this task?", isPresented: $confirmArchive,
+                               message: "You can restore it from Archive. Any active agent run will stop.",
+                               confirm: "Archive Task") {
+                guard workspace.snapshot?.workspaceID == snapshot.workspaceID else { return }
+                organize(task, destination: .archive)
+            }
+            .phoneConfirmation("Send this task to Trash?", isPresented: $confirmTrash,
+                               message: "You can restore it from Trash. Any active agent run will stop.",
+                               confirm: "Send to Trash") {
+                guard workspace.snapshot?.workspaceID == snapshot.workspaceID else { return }
+                organize(task, destination: .trash)
+            }
             .phoneConfirmation("Delete this task permanently?", isPresented: $confirmArchiveDeletion,
                                message: "“\(task.title)” and its comments will be permanently deleted. This can’t be undone.",
                                confirm: "Delete Permanently", role: .destructive) {
@@ -2336,7 +2476,7 @@ private struct TaskView: View {
         let canChangeStatus = snapshot.supportsFieldEditing
             && (snapshot.supportsTaskOverrides || workspace.pendingTaskChange(for: task.id) == nil)
         let returningToTodo = status == .sent || status == .working
-        if task.archivedAt != nil || status == .done {
+        if workspace.isArchived(task) || status == .done {
             if canChangeStatus, status == .done {
                 returnToTodoButton(for: task, in: snapshot, reopening: true)
                     .buttonStyle(PhoneActionButtonStyle())
@@ -2381,6 +2521,15 @@ private struct TaskView: View {
             }
             .foregroundStyle(colors.muted)
             .padding(.top, 8)
+        }
+    }
+
+    private func organize(_ task: PhoneTask, destination: PhoneRequest.TaskDestination) {
+        do {
+            try workspace.queue(.organizeTask(taskID: task.id, destination: destination))
+            dismiss()
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 
@@ -2914,8 +3063,8 @@ private struct QueueView: View {
     @Environment(\.phoneColors) private var colors
 
     var body: some View {
-        let agentTasks = (workspace.snapshot?.tasks ?? []).filter {
-            workspace.pendingTaskChange(for: $0.id) == nil
+        let agentTasks = workspace.visibleTasks.filter {
+            !workspace.isArchived($0) && workspace.pendingTaskChange(for: $0.id) == nil
                 && ($0.status == .sent || ($0.status == .working && $0.assigned))
         }
         List {
@@ -2980,6 +3129,12 @@ private struct QueueView: View {
 
     private func kind(_ request: PhoneRequest) -> String {
         switch request.action {
+        case .organizeTask(_, let destination):
+            switch destination {
+            case .archive: "Archive task"
+            case .trash: "Send to Trash"
+            case .active: "Restore task from Archive"
+            }
         case .create(_, _, _, _, let send, _, _, _, _, _): send ? "New task for agent" : "New to-do"
         case .send: PhoneTask.Status.sent.mobileStage
         case .complete: "Mark done"
@@ -2998,6 +3153,16 @@ private struct QueueView: View {
 }
 
 private struct CaptureView: View {
+    private struct PreparedTask {
+        let workspaceID: UUID
+        let projectID: String
+        let newProjectName: String?
+        let title: String
+        let notes: String
+        let definitionOfDone: String
+        let priority: PhoneTask.Priority
+    }
+
     @Environment(PhoneWorkspace.self) private var workspace
     @Environment(\.phoneColors) private var colors
     @Environment(\.dismiss) private var dismiss
@@ -3006,142 +3171,184 @@ private struct CaptureView: View {
     @State private var title = ""
     @State private var notes = ""
     @State private var definitionOfDone = ""
-    @State private var project = ""
-    @State private var priority = PhoneTask.Priority.none
+    @State private var project: String?
+    @State private var priority: PhoneTask.Priority?
     @State private var sendToAgent = false
     @State private var showSend = false
     @State private var dispatchQueued = false
+    @State private var preparedTask: PreparedTask?
     @State private var draftRequest: Task<Void, Never>?
-    @State private var draftError: String?
+    @State private var saving = false
     @State private var error: String?
 
     private var trimmedIdea: String { idea.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var savedTitle: String {
-        let edited = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return edited.isEmpty ? trimmedIdea : edited
-    }
+    private var editedTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var input: String { trimmedIdea.isEmpty ? editedTitle : trimmedIdea }
+    private var tooLong: Bool { trimmedIdea.utf16.count > SuggestedTaskDetails.captureLimit }
+    private var hasDetails: Bool { !editedTitle.isEmpty || !notes.isEmpty || !definitionOfDone.isEmpty }
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Button("Cancel") { dismiss() }.disabled(saving)
+                Text("New task")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityAddTraits(.isHeader)
+                Button(sendToAgent ? "Review send" : "Add", action: add)
+                    .disabled(input.isEmpty || tooLong || saving || draftRequest != nil
+                              || editedTitle.utf16.count > 500 || notes.utf8.count > 8000
+                              || definitionOfDone.utf16.count > 10_000)
+            }
+            .buttonStyle(PhoneActionButtonStyle())
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+
             Form {
-                Section("Idea") {
-                    TextField("Type or dictate what needs doing", text: $idea, axis: .vertical)
+                Section {
+                    TextField("Type or dictate a task", text: $idea, axis: .vertical)
                         .lineLimit(2...5)
                         .focused($ideaFocused)
-                    Button(action: draftTicket) {
-                        if draftRequest != nil {
-                            ProgressView("Drafting on this device…")
-                        } else {
-                            PhoneActionLabel(title: "Draft with Apple Intelligence", systemImage: "sparkles")
-                        }
-                    }
-                    .buttonStyle(PhoneActionButtonStyle())
-                    .disabled(trimmedIdea.isEmpty || draftRequest != nil || (!title.isEmpty && !notes.isEmpty && !definitionOfDone.isEmpty))
-                    if let message = draftError ?? TaskDrafting.unavailableReason {
-                        Text(message).font(.footnote).foregroundStyle(.secondary)
-                    }
-                }
-                .listRowBackground(colors.card)
-                Section("Ticket details") {
-                    TextField("Title (optional)", text: $title, axis: .vertical).lineLimit(1...3)
-                    TextField("Description and steps", text: $notes, axis: .vertical).lineLimit(2...6)
-                    TextField("Definition of done", text: $definitionOfDone, axis: .vertical).lineLimit(2...5)
-                    if savedTitle.utf16.count > 500 {
-                        Text("Give this ticket a shorter title.").font(.footnote).foregroundStyle(.secondary)
-                    }
-                }
-                .listRowBackground(colors.card)
-                Section {
+                        .accessibilityIdentifier("newTaskIdea")
                     Picker("Project", selection: $project) {
-                        ForEach(workspace.snapshot?.projects ?? []) { Text($0.name).tag($0.id) }
+                        Text("Auto").tag(nil as String?)
+                        ForEach(workspace.snapshot?.projects ?? []) { Text($0.name).tag(Optional($0.id)) }
                     }
                     Picker("Priority", selection: $priority) {
-                        ForEach(PhoneTask.Priority.allCases) { Text($0.title).tag($0) }
+                        Text("Auto").tag(nil as PhoneTask.Priority?)
+                        ForEach(PhoneTask.Priority.allCases) { Text($0.title).tag(Optional($0)) }
                     }
-                }
-                .listRowBackground(colors.card)
-                Section {
-                    Toggle("Send to agent", isOn: $sendToAgent)
-                        .tint(colors.actionAccent)
                 } footer: {
-                    if sendToAgent {
-                        Text("Review the agent, model, and optional comment before sending.")
+                    if tooLong {
+                        Text("Keep your task to 2,000 characters.").foregroundStyle(colors.danger)
                     }
                 }
                 .listRowBackground(colors.card)
+
+                Section {
+                    DisclosureGroup("More options") {
+                        TextField("Title (optional)", text: $title, axis: .vertical).lineLimit(1...3)
+                        TextField("Description and steps", text: $notes, axis: .vertical).lineLimit(2...6)
+                        TextField("Definition of done", text: $definitionOfDone, axis: .vertical).lineLimit(2...5)
+                        if TaskDrafting.unavailableReason == nil {
+                            Button(action: draftTicket) {
+                                if draftRequest != nil {
+                                    ProgressView("Drafting on this device…")
+                                } else {
+                                    PhoneActionLabel(title: "Draft with Apple Intelligence", systemImage: "sparkles")
+                                }
+                            }
+                            .buttonStyle(PhoneActionButtonStyle())
+                            .disabled(trimmedIdea.isEmpty || tooLong || draftRequest != nil)
+                        }
+                        Toggle("Send to agent", isOn: $sendToAgent)
+                            .tint(colors.actionAccent)
+                    }
+                }
+                .listRowBackground(colors.card)
+
+                if saving { ProgressView("Adding task…").listRowBackground(colors.card) }
                 if let error { Text(error).foregroundStyle(colors.danger).listRowBackground(colors.card) }
             }
+            .disabled(saving)
             .modifier(PhoneListAppearance())
-            .navigationTitle("New task")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                PhoneActionToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                PhoneActionToolbarItem(placement: .confirmationAction) {
-                    Button(sendToAgent ? "Review send" : "Add", action: add)
-                        .disabled(project.isEmpty || savedTitle.isEmpty || draftRequest != nil
-                                  || savedTitle.utf16.count > 500 || notes.utf8.count > 8000
-                                  || definitionOfDone.utf16.count > 10_000)
-                }
-            }
-            .onAppear {
-                project = workspace.snapshot?.projects.first?.id ?? ""
-                ideaFocused = true
-            }
+            .onAppear { ideaFocused = true }
             .onDisappear { draftRequest?.cancel() }
+            .interactiveDismissDisabled(saving)
             .sheet(isPresented: $showSend, onDismiss: {
+                preparedTask = nil
                 if dispatchQueued { dismiss() }
             }) {
-                if let snapshot = workspace.snapshot {
-                    PhoneAgentChooser(snapshot: snapshot, taskTitle: savedTitle) { agent, model, comment in
-                        try queueNewTask(agent: agent, model: model, comment: comment)
+                if let snapshot = workspace.snapshot, let task = preparedTask {
+                    PhoneAgentChooser(snapshot: snapshot, taskTitle: task.title) { agent, model, comment in
+                        try queue(task, agent: agent, model: model, comment: comment)
                         dispatchQueued = true
                     }
                 }
             }
         }
+        .background(colors.canvas.ignoresSafeArea())
     }
 
     private func draftTicket() {
-        guard draftRequest == nil, !trimmedIdea.isEmpty else { return }
-        let input = trimmedIdea
+        let idea = trimmedIdea
         ideaFocused = false
-        draftError = nil
+        error = nil
         draftRequest = Task {
             defer { draftRequest = nil }
             do {
-                let draft = try await TaskDrafting.expand(input)
+                let draft = try await TaskDrafting.expand(idea)
                 try Task.checkCancellation()
-                guard trimmedIdea == input else { return }
+                guard trimmedIdea == idea else { return }
                 if title.isEmpty { title = draft.title }
                 if notes.isEmpty { notes = draft.notes }
                 if definitionOfDone.isEmpty { definitionOfDone = draft.definitionOfDone }
             } catch is CancellationError {
                 return
             } catch {
-                draftError = error.localizedDescription
+                self.error = error.localizedDescription
             }
         }
     }
 
     private func add() {
-        if sendToAgent {
-            ideaFocused = false
-            showSend = true
-            return
-        }
-        do {
-            try queueNewTask()
-            dismiss()
-        } catch {
-            self.error = error.localizedDescription
+        guard let initialSnapshot = workspace.snapshot, !saving else { return }
+        let idea = input
+        let shouldDraft = !hasDetails && TaskDrafting.unavailableReason == nil
+        saving = true
+        ideaFocused = false
+        error = nil
+        Task {
+            defer { saving = false }
+            let suggestion = shouldDraft
+                ? try? await TaskDrafting.expand(idea, projects: project == nil ? initialSnapshot.projects : nil)
+                : nil
+            let generated = suggestion.flatMap { $0.isUsableForCapture ? $0 : nil }
+            let draft = generated ?? .fromIdea(idea)
+            guard let snapshot = workspace.snapshot, snapshot.workspaceID == initialSnapshot.workspaceID,
+                  let firstProject = snapshot.projects.first else {
+                error = "Your workspace changed. Please try again."
+                return
+            }
+            let destination = project == nil
+                ? TaskDrafting.captureDestination(in: idea, projects: snapshot.projects, suggestedName: generated?.projectName)
+                : (projectID: project, newProjectName: nil)
+            if snapshot.captureProjectID == nil, let newProject = destination.newProjectName, newProject != "Personal" {
+                error = "Update OpenTalon on your Mac to create a new project."
+                return
+            }
+            // Older Mac versions can still file tasks into an existing project.
+            let newProject = snapshot.captureProjectID == nil ? nil : destination.newProjectName
+            let projectID = destination.projectID ?? snapshot.captureProjectID ?? firstProject.id
+            guard snapshot.projects.contains(where: { $0.id == projectID }) else {
+                error = "Choose an available project."
+                return
+            }
+            let task = PreparedTask(workspaceID: snapshot.workspaceID, projectID: projectID, newProjectName: newProject,
+                                    title: editedTitle.isEmpty ? draft.title : editedTitle,
+                                    notes: notes.isEmpty ? draft.notes : notes,
+                                    definitionOfDone: definitionOfDone.isEmpty ? draft.definitionOfDone : definitionOfDone,
+                                    priority: priority ?? TaskDrafting.capturePriority(in: idea))
+            if sendToAgent {
+                preparedTask = task
+                showSend = true
+            } else {
+                do {
+                    try queue(task)
+                    dismiss()
+                } catch {
+                    self.error = error.localizedDescription
+                }
+            }
         }
     }
 
-    private func queueNewTask(agent: PhoneAgent? = nil, model: String? = nil, comment: String? = nil) throws {
+    private func queue(_ task: PreparedTask, agent: PhoneAgent? = nil, model: String? = nil, comment: String? = nil) throws {
+        guard workspace.snapshot?.workspaceID == task.workspaceID else { throw CompanionSyncError.missingWorkspace }
         try workspace.queue(.create(
-            projectID: project, title: savedTitle, notes: notes, priority: priority,
-            sendToAgent: agent != nil, definitionOfDone: definitionOfDone.isEmpty ? nil : definitionOfDone,
-            agent: agent, model: model, dispatchComment: comment
+            projectID: task.projectID, title: task.title, notes: task.notes, priority: task.priority,
+            sendToAgent: agent != nil, definitionOfDone: task.definitionOfDone.isEmpty ? nil : task.definitionOfDone,
+            agent: agent, model: model, dispatchComment: comment, newProjectName: task.newProjectName
         ))
     }
 }

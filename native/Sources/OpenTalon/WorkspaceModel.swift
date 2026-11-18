@@ -37,7 +37,7 @@ final class WorkspaceModel {
     @ObservationIgnored let profile: URL
     @ObservationIgnored let phoneCompanion: PhoneCompanion
     let reviewMilestone: OpenTalonReviewMilestone
-    let agentChat = AgentChat()
+    let agentChat: AgentChat
     @ObservationIgnored var appearanceChanged: ((Theme) -> Void)?
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private let defaults: UserDefaults?
@@ -66,6 +66,7 @@ final class WorkspaceModel {
 
     init(profile: URL, useDefaults: Bool) {
         self.profile = profile
+        agentChat = AgentChat(profile: profile)
         phoneCompanion = PhoneCompanion(profile: profile, isolated: !useDefaults)
         defaults = useDefaults ? .standard : nil
         reviewMilestone = OpenTalonReviewMilestone(defaults: defaults)
@@ -235,6 +236,9 @@ final class WorkspaceModel {
         let base = tasks.filter {
             !$0.deleted && $0.archivedAt == nil && $0.status == status && (boardId == nil || $0.boardId == boardId)
         }
+        if (sorting ?? sort) == .newest {
+            return newestFirst(base.filter { !filtered || matches($0) })
+        }
         if status == .todo && sorting == nil {
             let visible = base.filter { !filtered || matches($0) }
             let dated = visible.map { (item: $0, date: $0.creationDate) }
@@ -258,6 +262,16 @@ final class WorkspaceModel {
                 return selectedSort != .manual && first != second ? first < second : $0.offset < $1.offset
             }
             .map(\.element)
+    }
+
+    var recentTasks: [WorkItem] {
+        newestFirst(tasks.filter { !$0.deleted && $0.archivedAt == nil && matches($0, filterPriority: false) })
+    }
+
+    private func newestFirst(_ tasks: [WorkItem]) -> [WorkItem] {
+        tasks.map { (task: $0, date: $0.creationDate ?? .distantPast) }
+            .sorted { ($0.date, $0.task.id) > ($1.date, $1.task.id) }
+            .map(\.task)
     }
 
     private func orderAcrossProjects(_ column: [WorkItem]) -> [WorkItem] {

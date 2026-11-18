@@ -19,7 +19,11 @@ final class PhoneCompanion {
         let commentsByTask: [String: [PhoneComment]]
     }
 
-    private struct MutationRevision: Decodable { let revision: Int }
+    private struct MutationRevision: Decodable {
+        struct TaskIdentity: Decodable { let id: String }
+        let revision: Int
+        let task: TaskIdentity?
+    }
 
     @ObservationIgnored private let file: URL
     @ObservationIgnored private let cloud: any CompanionTransport
@@ -137,13 +141,18 @@ final class PhoneCompanion {
                                 .map { PhoneTrashedTask(id: $0.id, projectID: $0.boardId,
                                                        title: $0.title, revision: $0.revision) },
                              captureProjectID: workspace.selectedBoard, macName: Host.current().localizedName ?? "Mac",
-                             supportsTaskOverrides: true, supportsBulkArchive: true, supportsTaskReordering: true)
+                             supportsTaskOverrides: true, supportsBulkArchive: true, supportsTaskReordering: true,
+                             supportsTaskOrganization: true)
     }
 
     private func apply(_ request: PhoneRequest, service: Service) async throws -> PhoneReceipt {
         let action: String
         var input: [String: Any] = ["requestKey": "phone:" + request.id.uuidString]
         switch request.action {
+        case .organizeTask(let id, let destination):
+            action = "companion_organize_task"
+            input["id"] = id
+            input["destination"] = destination.rawValue
         case .create(let project, let title, let notes, let priority, let send, let definitionOfDone, let agent, let model,
                      let dispatchComment, let newProjectName):
             action = newProjectName == nil ? "create_task" : "capture_task"
@@ -244,7 +253,11 @@ final class PhoneCompanion {
 
         do {
             let result: MutationRevision = try await service.call(action, input)
-            return PhoneReceipt(requestID: request.id, outcome: .applied, revision: result.revision)
+            let createdTaskID: String?
+            if case .create = request.action { createdTaskID = result.task?.id }
+            else { createdTaskID = nil }
+            return PhoneReceipt(requestID: request.id, outcome: .applied, revision: result.revision,
+                                createdTaskID: createdTaskID)
         } catch let failure as ServiceFailure {
             switch failure.code {
             case "AGENT_SETUP_REQUIRED", "AGENT_NOT_INSTALLED", "MCP_DISABLED":

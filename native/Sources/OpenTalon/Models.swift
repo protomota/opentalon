@@ -32,13 +32,14 @@ enum Priority: String, CaseIterable, Codable, Identifiable {
 }
 
 enum BoardSort: String, CaseIterable, Identifiable {
-    case manual, high = "priority-desc", low = "priority-asc"
+    case manual, high = "priority-desc", low = "priority-asc", newest
     var id: Self { self }
     var title: String {
         switch self {
         case .manual: "Manual order"
         case .high: "Highest priority first"
         case .low: "Lowest priority first"
+        case .newest: "Newest first"
         }
     }
     func rank(_ priority: Priority) -> Int {
@@ -220,11 +221,12 @@ struct Preview: Decodable, Identifiable {
 }
 
 enum WorkspacePage: Hashable {
-    case dashboard, all, board(String), archive, trash, about
+    case dashboard, all, recent, board(String), archive, trash, about
     var storageKey: String {
         switch self {
         case .dashboard: "dashboard"
         case .all: "all"
+        case .recent: "recent"
         case .board(let id): "project.\(id)"
         case .archive: "archive"
         case .trash: "trash"

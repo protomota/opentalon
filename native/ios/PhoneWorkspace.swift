@@ -31,6 +31,23 @@ final class PhoneWorkspace {
         let message: String
     }
 
+    struct CapturedTask: Codable, Identifiable {
+        enum Result: Codable {
+            case queued
+            case saved(String?)
+            case rejected(String)
+        }
+
+        let id: UUID
+        let title: String
+        let project: String
+        let notes: String
+        let definitionOfDone: String?
+        let priority: PhoneTask.Priority
+        var result: Result = .queued
+        var dismissed = false
+    }
+
     private enum QueueError: LocalizedError {
         case changePending
 
@@ -44,6 +61,7 @@ final class PhoneWorkspace {
         var rejected: String?
         var commentDrafts: [String: String]?
         var unsavedNotes: [String: UnsavedNotes]?
+        var capturedTask: CapturedTask?
     }
 
     private let directory = URL.applicationSupportDirectory.appending(path: "OpenTalonCompanion", directoryHint: .isDirectory)
@@ -75,6 +93,14 @@ final class PhoneWorkspace {
     var snapshot: PhoneSnapshot? { state.snapshot }
     var pending: [PhoneRequest] { state.pending }
     var lastRejection: String? { state.rejected }
+    var capturedTask: CapturedTask? { state.capturedTask }
+
+    func dismissCapturedTask(_ id: UUID) {
+        guard state.capturedTask?.id == id else { return }
+        var updated = state
+        updated.capturedTask?.dismissed = true
+        try? save(updated)
+    }
 
     func accountDidChange() {
         accountGeneration += 1
@@ -93,6 +119,15 @@ final class PhoneWorkspace {
     func queue(_ action: PhoneRequest.Action) throws {
         guard let snapshot else { throw CompanionSyncError.missingWorkspace }
         let request = PhoneRequest(workspaceID: snapshot.workspaceID, action: action)
+        if case .organizeTask = action {
+            guard snapshot.supportsTaskOrganization else { throw CompanionSyncError.missingWorkspace }
+            guard !taskChanges(for: request.taskID ?? "").contains(where: {
+                if case .organizeTask = $0.action { return true }
+                return false
+            }) else { throw QueueError.changePending }
+            try enqueue(request, in: state)
+            return
+        }
         if case .forceComplete = action {
             try enqueue(request, in: state)
             return
@@ -125,7 +160,7 @@ final class PhoneWorkspace {
     }
 
     func canMarkDone(_ task: PhoneTask) -> Bool {
-        guard task.archivedAt == nil, displayedStatus(for: task) != .done else { return false }
+        guard !isArchived(task), !isTrashed(task), displayedStatus(for: task) != .done else { return false }
         if snapshot?.supportsTaskOverrides == true { return true }
         return task.isManualOpen && pendingTaskChange(for: task.id) == nil
     }
@@ -187,6 +222,10 @@ final class PhoneWorkspace {
     private func enqueue(_ request: PhoneRequest, in state: LocalState) throws {
         var updated = state
         updated.pending.append(request)
+        if case .create(let project, let title, let notes, let priority, _, let definition, _, _, _, let newProject) = request.action {
+            updated.capturedTask = CapturedTask(id: request.id, title: title, project: newProject ?? projectName(project),
+                                               notes: notes, definitionOfDone: definition, priority: priority)
+        }
         try save(updated)
         Task { await sync() }
     }
@@ -229,6 +268,7 @@ final class PhoneWorkspace {
                 if updated.snapshot?.workspaceID != incoming.workspaceID {
                     updated.commentDrafts = nil
                     updated.unsavedNotes = nil
+                    updated.capturedTask = nil
                 }
                 if updated.snapshot == nil, let legacy = load(directory.appending(path: "workspace.json")),
                    legacy.snapshot?.workspaceID == incoming.workspaceID {
@@ -256,6 +296,15 @@ final class PhoneWorkspace {
                 if receipt.isSettled(at: snapshot.revision) {
                     updated.pending.removeAll { $0.id == receipt.requestID }
                     updated.waiting.removeValue(forKey: receipt.requestID)
+                    if updated.capturedTask?.id == receipt.requestID {
+                        if receipt.outcome == .applied {
+                            // Older Macs only return a revision. A creation writes one task at that revision.
+                            let matches = snapshot.tasks.filter { $0.revision == receipt.revision }
+                            updated.capturedTask?.result = .saved(receipt.createdTaskID ?? (matches.count == 1 ? matches[0].id : nil))
+                        } else {
+                            updated.capturedTask?.result = .rejected(receipt.message ?? "The Mac couldn’t create this task.")
+                        }
+                    }
                     if receipt.outcome == .rejected {
                         let message = receipt.message ?? "The Mac could not apply a queued change."
                         updated.rejected = message
@@ -362,6 +411,7 @@ final class PhoneWorkspace {
     func displayedStatus(for task: PhoneTask) -> PhoneTask.Status {
         for request in taskChanges(for: task.id).reversed() {
             switch request.action {
+            case .organizeTask(_, .active): return .todo
             case .complete, .forceComplete: return .done
             case .send: return .sent
             case .editField(_, _, .status(let status, _, _, _)),
@@ -386,10 +436,24 @@ final class PhoneWorkspace {
         pendingField(for: task.id, field: .project) != nil
     }
 
+    func isArchived(_ task: PhoneTask) -> Bool {
+        for request in taskChanges(for: task.id).reversed() {
+            if case .organizeTask(_, let destination) = request.action {
+                return destination == .archive || (destination == .trash && task.archivedAt != nil)
+            }
+        }
+        return task.archivedAt != nil
+    }
+
+    func isTrashed(_ task: PhoneTask) -> Bool { pendingArchiveRemovals[task.id] != nil }
+
+    var visibleTasks: [PhoneTask] { (snapshot?.tasks ?? []).filter { !isTrashed($0) } }
+
     var pendingArchiveRemovals: [String: Bool] {
         var removals: [String: Bool] = [:]
         for request in pending where request.workspaceID == snapshot?.workspaceID {
             switch request.action {
+            case .organizeTask(let id, .trash): removals[id] = false
             case .removeArchived(let id, _, let permanently):
                 removals[id] = permanently
             case .manageArchive(let ids, _, let permanently):
@@ -426,6 +490,10 @@ final class PhoneWorkspace {
         }
     }
 
+    func newestTasks(_ tasks: [PhoneTask]) -> [PhoneTask] {
+        tasks.sorted { ($0.createdAt ?? .distantPast, $0.id) > ($1.createdAt ?? .distantPast, $1.id) }
+    }
+
     func manualTaskOrder(_ tasks: [PhoneTask], projectID: String, status: PhoneTask.Status) -> [PhoneTask] {
         func position(_ task: PhoneTask) -> Int {
             guard task.projectID == projectID, task.status == status else { return .max }
@@ -453,7 +521,7 @@ final class PhoneWorkspace {
         case .restoreTrashed(let id, _): snapshot?.trashedTasks?.first(where: { $0.id == id })?.title ?? "Task"
         case .send(let id, _, _), .complete(let id, _), .comment(let id, _), .editNotes(let id, _, _),
              .editField(let id, _, _), .setField(let id, _, _), .forceComplete(let id), .removeArchived(let id, _, _),
-             .reorderTask(let id, _, _, _, _):
+             .reorderTask(let id, _, _, _, _), .organizeTask(let id, _):
             snapshot?.tasks.first(where: { $0.id == id })?.title ?? "Task"
         }
     }

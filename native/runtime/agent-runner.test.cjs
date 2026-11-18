@@ -26,11 +26,12 @@ test('stopping a queued task leaves the active task connected; late process exit
   await f.launched[0].exit(new Error('Late exit'))
   assert.equal(f.store.agentJob(completed.id).state, 'review')
 })
-function fixture(t) {
+function fixture(t, { projectApiUnavailable = false, projectPageSize = 100 } = {}) {
   const folder = fs.mkdtempSync(path.join(base, 'agent-'))
   const store = new Store(folder)
   const launched = []
   const opened = []
+  const projects = []
   const runner = new AgentRunner({
     store,
     connector: {
@@ -58,7 +59,22 @@ function fixture(t) {
         closed: false,
         async request(method, params) {
           entry.written.push({ method, params })
-          return method === 'thread/start' ? { thread: { id: randomUUID() } } : {}
+          if (method === 'project/list') {
+            if (projectApiUnavailable)
+              throw Object.assign(new Error('Method not found'), { code: -32601 })
+            const start = Number(params.cursor ?? 0)
+            const end = start + projectPageSize
+            return { data: projects.slice(start, end), nextCursor: end < projects.length ? String(end) : null }
+          }
+          if (method === 'project/create') {
+            const project = { id: randomUUID(), roots: params.roots }
+            projects.push(project)
+            return { project }
+          }
+          if (method === 'thread/start') {
+            return { thread: { id: randomUUID(), projectId: params.projectId } }
+          }
+          return {}
         },
         write(message) {
           entry.written.push(message)
@@ -91,8 +107,47 @@ function fixture(t) {
       expectedRevision: store.task(task.id).revision,
       status: 'Sent to agent',
     })
-  return { folder, store, runner, launched, opened, write, settings, task, send }
+  return { folder, store, runner, launched, opened, projects, write, settings, task, send }
 }
+test('new Codex tasks share the local project for their selected folder across launches', async (t) => {
+  const f = fixture(t, { projectPageSize: 1 })
+  f.projects.push({ id: randomUUID(), roots: [{ path: path.dirname(f.folder) }] })
+  await f.settings('codex')
+
+  async function launch(title) {
+    await f.send(await f.task(title))
+    await f.runner.tick()
+    const calls = f.launched.at(-1).written
+    const { threadId } = f.runner.current.job
+    await f.runner.stop(f.runner.current.job.id)
+    return { calls, threadId, start: calls.find(({ method }) => method === 'thread/start').params }
+  }
+
+  const first = await launch('First task in the shared project')
+  const second = await launch('Another task in the shared project')
+  assert.notEqual(first.threadId, second.threadId)
+  const creation = first.calls.find(({ method }) => method === 'project/create')
+  assert.equal(creation.params.name, 'OpenTalon')
+  assert.match(creation.params.idempotencyKey, /^opentalon:[a-f0-9]{64}$/)
+  assert.equal(second.calls.filter(({ method }) => method === 'project/list').length, 2)
+  assert.ok(!second.calls.some(({ method }) => method === 'project/create'))
+  for (const launch of [first, second]) {
+    assert.equal(launch.start.projectId, f.projects[1].id)
+    assert.equal(launch.start.cwd, fs.realpathSync(f.folder))
+    assert.deepEqual(launch.start.runtimeWorkspaceRoots, [launch.start.cwd])
+    assert.equal(launch.start.ephemeral, false)
+  }
+})
+test('older Codex launchers still start saved tasks in the selected folder', async (t) => {
+  const f = fixture(t, { projectApiUnavailable: true })
+  await f.settings('codex')
+  await f.send(await f.task('Open a saved chat with an older launcher'))
+  await f.runner.tick()
+  const start = f.launched[0].written.find(({ method }) => method === 'thread/start').params
+  assert.equal(start.cwd, fs.realpathSync(f.folder))
+  assert.equal(start.ephemeral, false)
+  assert.equal(start.projectId, undefined)
+})
 test('explicit models are bound to the chosen agent and passed to both runtimes', async (t) => {
   const f = fixture(t)
   await f.settings('codex')
@@ -315,8 +370,8 @@ test('both defaults route correctly, persist per run, launch once and keep In pr
   assert.equal(f.launched.length, 2)
   assert.equal(f.launched[1].file, '/safe/codex')
   assert.equal(f.launched[1].written[1].method, 'initialized')
-  assert.equal(f.launched[1].written[2].method, 'thread/start')
-  assert.equal(f.launched[1].written[3].method, 'turn/start')
+  assert.ok(f.launched[1].written.some(({ method }) => method === 'thread/start'))
+  assert.equal(f.launched[1].written.at(-1).method, 'turn/start')
   const secondJob = f.store.agentJobs()[0]
   await f.write('report_agent_progress', {
     runId: secondJob.id,

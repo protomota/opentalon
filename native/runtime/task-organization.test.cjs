@@ -1,0 +1,53 @@
+const test = require('node:test')
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const { randomUUID } = require('node:crypto')
+const { Store } = require('./store.cjs')
+
+test('companion Archive and Trash preserve task data, cancel dispatch and restore without duplicates', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opentalon-organization-'))
+  const store = new Store(directory, { agentReadiness: () => 'codex' })
+  t.after(() => { store.close(); fs.rmSync(directory, { recursive: true, force: true }) })
+  const call = (name, input) => store.dispatch(name, { requestKey: randomUUID(), ...input })
+  const boardId = store.snapshot().boards[0].id
+  store.set('agentSettings', { defaultAgent: 'codex', workingFolder: directory })
+  for (const status of ['To do', 'In progress', 'Done', 'Sent to agent']) {
+    let { task } = await call('create_task', { boardId, title: `Keep ${status}`, notes: 'Preserve these notes', status })
+    await call('add_task_comment', { taskId: task.id, text: 'Keep this comment' })
+    // A queued edit before Archive must not invalidate the user's later organization action.
+    task = store.task(task.id)
+    await call('update_task', { id: task.id, expectedRevision: task.revision, priority: 'High' })
+    const archive = { id: task.id, destination: 'archive', requestKey: randomUUID() }
+    const first = await store.dispatch('companion_organize_task', archive)
+    const replay = await store.dispatch('companion_organize_task', archive)
+    assert.deepEqual(replay, first)
+    task = store.task(task.id)
+    assert.ok(task.archivedAt)
+    assert.equal(task.deleted, false)
+    assert.equal(task.status, status)
+    assert.equal(task.notes, 'Preserve these notes')
+    assert.equal(task.priority, 'High')
+    assert.equal(store.comments(task.id).length, 1)
+    for (const format of ['json', 'sqlite']) {
+      const backup = await call('create_backup', { format })
+      const restored = await store.inspect(backup.path)
+      assert.ok(restored.tasks.find((item) => item.id === task.id).archived_at)
+    }
+    assert.ok(!store.assignedRun(task.id))
+    assert.ok(!store.agentJobs().some((job) => job.taskId === task.id && job.state === 'queued'))
+    await call('companion_organize_task', { id: task.id, destination: 'active' })
+    task = store.task(task.id)
+    assert.equal(task.archivedAt, null)
+    assert.equal(task.status, 'To do')
+    await call('companion_organize_task', { id: task.id, destination: 'trash' })
+    task = store.task(task.id)
+    assert.equal(task.deleted, true)
+    await call('restore_task', { id: task.id, expectedRevision: task.revision })
+    assert.equal(store.task(task.id).deleted, false)
+    assert.equal(store.comments(task.id).length, 1)
+  }
+  const live = store.snapshot().tasks.filter((task) => !task.deleted && !task.archivedAt)
+  assert.equal(new Set(live.map((task) => task.position)).size, live.length)
+})

@@ -2,8 +2,11 @@ import Foundation
 
 public enum TaskCreationOrder {
     public static func date(from value: String) -> Date? {
-        (try? Date(value, strategy: .iso8601.time(includingFractionalSeconds: true)))
-            ?? (try? Date(value, strategy: .iso8601))
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
     }
 
     public static func precedes(urgent: Bool, createdAt: Date?, otherUrgent: Bool, otherCreatedAt: Date?) -> Bool? {

@@ -29,7 +29,7 @@ const projects = new Map()
 let chatController
 const chatTools = tools.filter(({ name }) => [
   'list_boards', 'create_board', 'rename_board', 'set_board_icon',
-  'list_tasks', 'get_task', 'create_task', 'update_task', 'move_task',
+  'list_tasks', 'get_task', 'create_task', 'update_task', 'set_task_plan', 'move_task',
   'trash_task', 'list_trash', 'restore_task', 'list_task_comments', 'add_task_comment',
 ].includes(name))
 

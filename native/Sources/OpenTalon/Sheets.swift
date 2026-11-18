@@ -227,6 +227,7 @@ private struct NewTaskView: View {
     @State private var idea = ""
     @State private var notes = ""
     @State private var definitionOfDone = ""
+    @State private var includePlan = false
     @State private var detailsExpanded = false
     @State private var draftRequest: Task<Void, Never>?
     @State private var draftError: String?
@@ -313,6 +314,7 @@ private struct NewTaskView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     detailField("Description and steps", text: $notes, height: 92)
                     detailField("Definition of done", text: $definitionOfDone, height: 62)
+                    Toggle("Include a plan", isOn: $includePlan).tint(palette.actionAccent)
                 }
                 .padding(.top, 10)
                 .disabled(draftRequest != nil)
@@ -378,8 +380,17 @@ private struct NewTaskView: View {
         Task {
             defer { busy = false }
             do {
+                let plan: String?
+                if includePlan || TaskPlan.requested(in: idea) {
+                    if TaskDrafting.unavailableReason == nil {
+                        plan = try await TaskPlan.revise("", instruction: "Draft a Markdown plan with actionable steps and verification checks.",
+                                                         context: "\(taskTitle)\n\(notes)\nDefinition of done: \(definitionOfDone)")
+                    } else {
+                        plan = TaskPlan.starter(title: taskTitle, notes: notes, definitionOfDone: definitionOfDone)
+                    }
+                } else { plan = nil }
                 try await model.createItem(title: taskTitle, notes: notes, definitionOfDone: definitionOfDone,
-                                           project: board, status: status, priority: priority)
+                                           project: board, status: status, priority: priority, planMarkdown: plan)
                 if model.pendingSend == nil { model.sheet = nil }
             } catch let failure { error = failure.localizedDescription }
         }

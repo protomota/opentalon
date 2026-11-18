@@ -1,4 +1,5 @@
 import AppKit
+import CompanionCore
 import SwiftUI
 
 private struct TaskDraft: Equatable {
@@ -71,6 +72,13 @@ private struct DueDateControl: View {
 }
 
 struct TaskDetails: View {
+    private struct PlanEdit: Identifiable {
+        let id: String
+        let markdown: String
+        let reference: String
+        let context: String
+    }
+    @State private var planEdit: PlanEdit?
     @State private var confirmForceComplete = false
     @Environment(WorkspaceModel.self) private var model
     @Environment(\.palette) private var palette
@@ -117,6 +125,16 @@ struct TaskDetails: View {
             ThemedScrollView(track: palette.panel) {
                 VStack(alignment: .leading, spacing: 16) {
                     editFields
+                    VStack(alignment: .leading, spacing: 9) {
+                        Text("Plan").font(.headline)
+                        Button {
+                            planEdit = PlanEdit(id: item.id, markdown: item.planMarkdown ?? "", reference: item.reference,
+                                                context: "\(draft.title)\n\(draft.notes)\nDefinition of done: \(draft.criteria)")
+                        } label: {
+                            Label((item.planMarkdown ?? "").isEmpty ? "Create plan" : "View plan", systemImage: "doc.text")
+                        }
+                        .accessibilityIdentifier("taskPlan")
+                    }
                     if let error {
                         Text(error).font(.caption).foregroundStyle(palette.danger)
                     }
@@ -159,6 +177,17 @@ struct TaskDetails: View {
             }
         }
         .background(palette.panel)
+        .sheet(item: $planEdit) { edit in
+            PlanDocumentView(markdown: edit.markdown,
+                             draft: UserDefaults.standard.string(forKey: "planDraft." + edit.id),
+                             reference: edit.reference, context: edit.context,
+                             colors: OpenTalonColors(theme: palette.theme)) { markdown in
+                try await model.mutate("set_task_plan", ["id": edit.id, "expectedMarkdown": edit.markdown, "markdown": markdown])
+            } persistDraft: { markdown in
+                UserDefaults.standard.set(markdown, forKey: "planDraft." + edit.id)
+            }
+            .frame(minWidth: 600, minHeight: 650)
+        }
         .alert("Mark this task done anyway?", isPresented: $confirmForceComplete) {
             Button("Cancel", role: .cancel) {}
             Button("Mark Done") {

@@ -1,4 +1,5 @@
 const test = require('node:test')
+const { tools } = require('./contracts.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
@@ -80,7 +81,7 @@ test('real HTTP MCP handshake, discovery, shared actions and guarded recovery', 
   const notification = await rpc({ jsonrpc: '2.0', method: 'notifications/initialized' })
   assert.equal(notification.status, 202)
   const discovery = await rpc({ jsonrpc: '2.0', id: 2, method: 'tools/list' })
-  assert.equal((await discovery.json()).result.tools.length, 24)
+  assert.deepEqual((await discovery.json()).result.tools.map((tool) => tool.name).sort(), tools.map((tool) => tool.name).sort())
   let board = (await write('create_board', { name: 'From agent' })).board
   board = (
     await write('rename_board', { id: board.id, name: 'Renamed', expectedRevision: board.revision })

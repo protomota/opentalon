@@ -301,11 +301,13 @@ final class WorkspaceModel {
     }
 
     func createItem(title: String, notes: String, definitionOfDone: String, project: String,
-                    status: WorkStatus, priority: Priority) async throws {
-        try await sendable("create_task", [
+                    status: WorkStatus, priority: Priority, planMarkdown: String? = nil) async throws {
+        var fields: [String: Any] = [
             "boardId": project, "title": title, "notes": notes, "definitionOfDone": definitionOfDone,
             "status": status.rawValue, "priority": priority.rawValue
-        ], title: title, choosingModel: status == .sent)
+        ]
+        fields["planMarkdown"] = planMarkdown
+        try await sendable("create_task", fields, title: title, choosingModel: status == .sent)
     }
 
     func move(_ item: WorkItem, to status: WorkStatus, board boardId: String? = nil,

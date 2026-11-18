@@ -284,6 +284,7 @@ private final class PhoneNotificationDelegate: NSObject, UIApplicationDelegate, 
 }
 
 struct CompanionHome: View {
+    @State private var showAssistant = false
     private enum Page { case today, projects, queue, settings }
 
     @Environment(PhoneWorkspace.self) private var workspace
@@ -349,6 +350,11 @@ struct CompanionHome: View {
             .tag(Page.settings)
         }
         .sheet(isPresented: $showAddTask) { CaptureView().tint(colors.text) }
+        .sheet(isPresented: $showAssistant) {
+            if let snapshot = workspace.snapshot {
+                PhoneAssistantView(workspaceID: snapshot.workspaceID)
+            }
+        }
         .sheet(item: $openedTask) { task in
             NavigationStack {
                 CapturedTaskDetail(task: task)
@@ -427,6 +433,15 @@ struct CompanionHome: View {
 
     @ToolbarContentBuilder
     private var controls: some ToolbarContent {
+        PhoneActionToolbarItem(placement: .primaryAction) {
+            Button { showAssistant = true } label: {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(OpenTalonColors(theme: theme, systemScheme: systemScheme).actionAccent)
+            }
+            .buttonStyle(PhoneActionButtonStyle(circular: true))
+            .accessibilityLabel("Ask OpenTalon")
+            .disabled(workspace.snapshot == nil)
+        }
         PhoneActionToolbarItem(placement: .primaryAction) {
             Button {
                 showAddTask = true
@@ -521,6 +536,10 @@ private struct CapturedTaskDetail: View {
                 }
                 if let definition = current.definitionOfDone, !definition.isEmpty {
                     Section("Definition of done") { Text(definition).textSelection(.enabled) }
+                        .listRowBackground(colors.card)
+                }
+                if let plan = current.planMarkdown, !plan.isEmpty {
+                    Section("Plan") { MarkdownPlanPreview(plan) }
                         .listRowBackground(colors.card)
                 }
                 Section {
@@ -2185,7 +2204,7 @@ private struct TaskCardLabel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(task.title).font(.body.weight(.semibold))
+            Text(workspace.displayedText(for: task, field: .title)).font(.body.weight(.semibold))
             if workspace.hasPendingProjectMove(for: task) {
                 Text("New task ID syncing…").font(.caption).foregroundStyle(colors.muted)
             } else if let taskKey = task.displayTaskID {
@@ -2302,6 +2321,14 @@ private struct DueDateEdit: Identifiable {
 }
 
 private struct TaskView: View {
+    private struct PlanEdit: Identifiable {
+        let id: String
+        let workspaceID: UUID
+        let markdown: String
+        let reference: String
+        let context: String
+    }
+    @State private var planEdit: PlanEdit?
     @Environment(\.dismiss) private var dismiss
     @State private var confirmTrash = false
     @State private var confirmArchive = false
@@ -2341,7 +2368,7 @@ private struct TaskView: View {
                                 .font(.caption)
                                 .foregroundStyle(colors.muted)
                         }
-                        Text(task.title).font(.title2.weight(.semibold))
+                        Text(workspace.displayedText(for: task, field: .title)).font(.title2.weight(.semibold))
                         quickActions(for: task, in: snapshot)
                         if let pickup = task.agentPickup {
                             Label(pickupCaption(macName: snapshot.macName, date: pickup.at), systemImage: "checkmark.icloud")
@@ -2363,10 +2390,36 @@ private struct TaskView: View {
                 }
                 .listRowBackground(colors.card)
                 notes(for: task, in: snapshot)
-                if !task.definitionOfDone.isEmpty {
-                    Section("Definition of done") { Text(task.definitionOfDone).textSelection(.enabled) }
+                if !workspace.displayedText(for: task, field: .definitionOfDone).isEmpty {
+                    Section("Definition of done") { Text(workspace.displayedText(for: task, field: .definitionOfDone)).textSelection(.enabled) }
                         .listRowBackground(colors.card)
                 }
+                Section("Plan") {
+                    Button {
+                        planEdit = PlanEdit(id: task.id, workspaceID: snapshot.workspaceID,
+                                            markdown: workspace.displayedPlan(for: task),
+                                            reference: task.displayTaskID ?? "Task",
+                                            context: "\(task.title)\n\(task.notes)\nDefinition of done: \(task.definitionOfDone)")
+                    } label: {
+                        PhoneActionLabel(title: workspace.displayedPlan(for: task).isEmpty ? "Create plan" : "View plan",
+                                         systemImage: "doc.text")
+                    }
+                    .accessibilityIdentifier("taskPlan")
+                    .disabled(!snapshot.supportsTaskPlans)
+                    if workspace.hasPendingPlan(for: task.id) {
+                        Label("Plan saved locally. Queued for Mac.", systemImage: "clock")
+                            .font(.caption).foregroundStyle(colors.muted)
+                    }
+                    if workspace.planDraft(for: task.id) != nil {
+                        Text("An unsaved plan draft is available. Open the plan to review it.")
+                            .font(.caption).foregroundStyle(colors.muted)
+                    }
+                    if !snapshot.supportsTaskPlans {
+                        Text("Update OpenTalon on your Mac and sync to use plans.")
+                            .font(.caption).foregroundStyle(colors.muted)
+                    }
+                }
+                .listRowBackground(colors.card)
                 comments(for: task)
                 if !workspace.isArchived(task) {
                     Section {
@@ -2446,6 +2499,15 @@ private struct TaskView: View {
             }
             .sheet(item: $notesEdit) { edit in
                 NotesEditor(edit: edit)
+            }
+            .sheet(item: $planEdit) { edit in
+                PlanDocumentView(markdown: edit.markdown, draft: workspace.planDraft(for: edit.id),
+                                 reference: edit.reference, context: edit.context, colors: colors) { markdown in
+                    try workspace.savePlan(markdown, expected: edit.markdown, for: edit.id, in: edit.workspaceID)
+                } persistDraft: { markdown in
+                    do { try workspace.savePlanDraft(markdown, for: edit.id, in: edit.workspaceID) }
+                    catch { self.error = error.localizedDescription }
+                }
             }
             .sheet(item: $dueDateEdit) { edit in
                 DueDateEditor(edit: edit)
@@ -3122,20 +3184,22 @@ private struct QueueView: View {
         switch request.action {
         case .send(_, _, let agent), .editField(_, _, .status(.sent, let agent, _, _)),
              .setField(_, _, .status(.sent, let agent, _, _)),
-             .create(_, _, _, _, true, _, let agent, _, _, _): agent
+             .create(_, _, _, _, true, _, let agent, _, _, _, _): agent
         default: nil
         }
     }
 
     private func kind(_ request: PhoneRequest) -> String {
         switch request.action {
+        case .createProject: "Create project"
+        case .savePlan: "Save plan"
         case .organizeTask(_, let destination):
             switch destination {
             case .archive: "Archive task"
             case .trash: "Send to Trash"
             case .active: "Restore task from Archive"
             }
-        case .create(_, _, _, _, let send, _, _, _, _, _): send ? "New task for agent" : "New to-do"
+        case .create(_, _, _, _, let send, _, _, _, _, _, _): send ? "New task for agent" : "New to-do"
         case .send: PhoneTask.Status.sent.mobileStage
         case .complete: "Mark done"
         case .forceComplete: "Mark done anyway"
@@ -3160,6 +3224,7 @@ private struct CaptureView: View {
         let title: String
         let notes: String
         let definitionOfDone: String
+        let planMarkdown: String?
         let priority: PhoneTask.Priority
     }
 
@@ -3171,6 +3236,7 @@ private struct CaptureView: View {
     @State private var title = ""
     @State private var notes = ""
     @State private var definitionOfDone = ""
+    @State private var includePlan = false
     @State private var project: String?
     @State private var priority: PhoneTask.Priority?
     @State private var sendToAgent = false
@@ -3218,6 +3284,10 @@ private struct CaptureView: View {
                         Text("Auto").tag(nil as PhoneTask.Priority?)
                         ForEach(PhoneTask.Priority.allCases) { Text($0.title).tag(Optional($0)) }
                     }
+                    Toggle("Include a plan", isOn: $includePlan)
+                        .tint(colors.actionAccent)
+                        .disabled(workspace.snapshot?.supportsTaskPlans != true)
+                        .accessibilityIdentifier("includeTaskPlan")
                 } footer: {
                     if tooLong {
                         Text("Keep your task to 2,000 characters.").foregroundStyle(colors.danger)
@@ -3253,6 +3323,9 @@ private struct CaptureView: View {
             .disabled(saving)
             .modifier(PhoneListAppearance())
             .onAppear { ideaFocused = true }
+            .onChange(of: idea) { _, value in
+                if TaskPlan.requested(in: value), workspace.snapshot?.supportsTaskPlans == true { includePlan = true }
+            }
             .onDisappear { draftRequest?.cancel() }
             .interactiveDismissDisabled(saving)
             .sheet(isPresented: $showSend, onDismiss: {
@@ -3324,10 +3397,22 @@ private struct CaptureView: View {
                 error = "Choose an available project."
                 return
             }
+            let finalTitle = editedTitle.isEmpty ? draft.title : editedTitle
+            let finalNotes = notes.isEmpty ? draft.notes : notes
+            let finalDefinition = definitionOfDone.isEmpty ? draft.definitionOfDone : definitionOfDone
+            let plan: String?
+            if includePlan {
+                guard snapshot.supportsTaskPlans else { error = "Update OpenTalon on your Mac to save a plan."; return }
+                let context = "\(finalTitle)\n\(finalNotes)\nDefinition of done: \(finalDefinition)"
+                if TaskDrafting.unavailableReason == nil {
+                    do { plan = try await TaskPlan.revise("", instruction: "Create a task plan with actionable steps and verification checks.", context: context) }
+                    catch { self.error = error.localizedDescription; return }
+                } else {
+                    plan = TaskPlan.starter(title: finalTitle, notes: finalNotes, definitionOfDone: finalDefinition)
+                }
+            } else { plan = nil }
             let task = PreparedTask(workspaceID: snapshot.workspaceID, projectID: projectID, newProjectName: newProject,
-                                    title: editedTitle.isEmpty ? draft.title : editedTitle,
-                                    notes: notes.isEmpty ? draft.notes : notes,
-                                    definitionOfDone: definitionOfDone.isEmpty ? draft.definitionOfDone : definitionOfDone,
+                                    title: finalTitle, notes: finalNotes, definitionOfDone: finalDefinition, planMarkdown: plan,
                                     priority: priority ?? TaskDrafting.capturePriority(in: idea))
             if sendToAgent {
                 preparedTask = task
@@ -3348,8 +3433,397 @@ private struct CaptureView: View {
         try workspace.queue(.create(
             projectID: task.projectID, title: task.title, notes: task.notes, priority: task.priority,
             sendToAgent: agent != nil, definitionOfDone: task.definitionOfDone.isEmpty ? nil : task.definitionOfDone,
-            agent: agent, model: model, dispatchComment: comment, newProjectName: task.newProjectName
+            agent: agent, model: model, dispatchComment: comment, newProjectName: task.newProjectName,
+            planMarkdown: task.planMarkdown
         ))
+    }
+}
+
+private struct PhoneAssistantView: View {
+    private struct Review: Identifiable {
+        let id = UUID()
+        let task: PhoneTask
+        let operation: String
+    }
+    private struct ProposedPlan: Identifiable {
+        let id = UUID()
+        let task: PhoneTask
+        let original: String
+        let proposed: String
+    }
+    @Environment(PhoneWorkspace.self) private var workspace
+    @Environment(\.phoneColors) private var colors
+    @Environment(\.dismiss) private var dismiss
+    @State private var history: PhoneAssistantHistory
+    @State private var input = ""
+    @State private var generation: Task<Void, Never>?
+    @State private var error: String?
+    @State private var results = [TaskAssistantCommand: String]()
+    @State private var review: Review?
+    @State private var proposedPlan: ProposedPlan?
+    @State private var openedTask: String?
+    @State private var deleteAll = false
+    @State private var deleteCurrent = false
+    @State private var showReviewConfirmation = false
+    @FocusState private var inputFocused: Bool
+    let workspaceID: UUID
+
+    init(workspaceID: UUID) {
+        self.workspaceID = workspaceID
+        _history = State(initialValue: PhoneAssistantHistory(workspaceID: workspaceID))
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                header
+                ScrollViewReader { scroll in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 14) {
+                            if (history.current?.messages ?? []).isEmpty { examples }
+                            ForEach(history.current?.messages ?? []) { message in
+                                messageRow(message).id(message.id)
+                            }
+                            if generation != nil { ProgressView("Working on this device…") }
+                            if let error = error ?? history.error {
+                                Text(error).font(.footnote).foregroundStyle(colors.danger)
+                            }
+                            if let reason = TaskDrafting.unavailableReason {
+                                Text(reason).font(.footnote).foregroundStyle(colors.muted)
+                            }
+                            Text("Apple Intelligence runs on this device. Task changes sync through your existing Mac connection.")
+                                .font(.caption).foregroundStyle(colors.muted)
+                        }
+                        .padding(20)
+                    }
+                    .scrollDismissesKeyboard(.interactively)
+                    .simultaneousGesture(TapGesture().onEnded { inputFocused = false })
+                    .onChange(of: history.current?.messages.count) {
+                        if let last = history.current?.messages.last { scroll.scrollTo(last.id, anchor: .bottom) }
+                    }
+                }
+                composer
+            }
+            .background(colors.canvas.ignoresSafeArea())
+            .foregroundStyle(colors.text)
+            .navigationBarHidden(true)
+            .navigationDestination(isPresented: Binding(get: { openedTask != nil }, set: { if !$0 { openedTask = nil } })) {
+                if let openedTask { TaskView(taskID: openedTask).navigationBarHidden(false) }
+            }
+        }
+        .buttonStyle(PhoneActionButtonStyle())
+        .phoneConfirmation("Delete all chats?", isPresented: $deleteAll,
+                           message: "This deletes your saved on-device chats. Your tasks and plans stay unchanged.",
+                           confirm: "Delete All Chats", role: .destructive) {
+            do { try history.deleteAll() } catch { self.error = error.localizedDescription }
+        }
+        .phoneConfirmation("Delete this chat?", isPresented: $deleteCurrent,
+                           message: "Your tasks and plans stay unchanged.", confirm: "Delete Chat", role: .destructive) {
+            if let id = history.current?.id {
+                do { try history.deleteChat(id) } catch { self.error = error.localizedDescription }
+            }
+        }
+        .phoneConfirmation(confirmationTitle, isPresented: $showReviewConfirmation,
+                           message: confirmationMessage, confirm: confirmationButton) { confirmReview() }
+        .sheet(isPresented: Binding(get: { review?.operation == "send" }, set: { if !$0 { review = nil } })) {
+            if let review, let snapshot = workspace.snapshot, snapshot.workspaceID == workspaceID {
+                PhoneAgentChooser(snapshot: snapshot, taskTitle: review.task.title) { agent, model, comment in
+                    guard let current = workspace.snapshot?.tasks.first(where: { $0.id == review.task.id }) else { return }
+                    try workspace.queueField(.status(.sent, agent: agent, model: model, dispatchComment: comment),
+                                             for: current, in: workspaceID)
+                    try history.append(.init(role: "action", text: "Send to agent queued for Mac.", taskID: current.id))
+                }
+            }
+        }
+        .sheet(item: $proposedPlan) { proposal in
+            PlanDocumentView(markdown: proposal.original, proposal: proposal.proposed,
+                             reference: proposal.task.displayTaskID ?? "Task",
+                             context: proposal.task.title + "\n" + proposal.task.notes, colors: colors) { markdown in
+                try workspace.savePlan(markdown, expected: proposal.original, for: proposal.task.id, in: workspaceID)
+                try history.append(.init(role: "action", text: "Plan saved locally and queued for Mac.", taskID: proposal.task.id))
+            }
+        }
+        .onDisappear { generation?.cancel() }
+    }
+
+    private var header: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Ask OpenTalon").font(.headline)
+                if let chat = history.current {
+                    Text(chat.title).font(.caption).foregroundStyle(colors.muted).lineLimit(1)
+                }
+            }
+            Spacer()
+            Menu {
+                Button("New chat", systemImage: "plus") { do { try history.newChat() } catch { self.error = error.localizedDescription } }
+                ForEach(history.chats) { chat in
+                    Button(chat.title) { do { try history.select(chat.id) } catch { self.error = error.localizedDescription } }
+                }
+                Divider()
+                Button("Delete this chat", role: .destructive) { deleteCurrent = true }.disabled(history.current == nil)
+                Button("Delete all chats", role: .destructive) { deleteAll = true }
+                    .disabled(history.chats.isEmpty && history.error == nil)
+            } label: { Image(systemName: "clock.arrow.circlepath").foregroundStyle(colors.actionAccent) }
+            .accessibilityLabel("Chat history")
+            .disabled(generation != nil)
+            Button("Close") { generation?.cancel(); dismiss() }
+        }
+        .padding(20)
+        .contentShape(Rectangle())
+        .simultaneousGesture(TapGesture().onEnded { inputFocused = false })
+    }
+
+    private var examples: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Manage your tasks by chatting").font(.title3.bold())
+            Text("Find tasks, change priorities, move work between projects, or draft a plan.")
+                .foregroundStyle(colors.muted)
+            ForEach(["What are my urgent tasks?", "Create a task with a plan to review my weekly goals", "Which tasks are in progress?"], id: \.self) { example in
+                Button(example) { input = example; send() }
+                    .disabled(TaskDrafting.unavailableReason != nil || generation != nil)
+            }
+        }
+    }
+
+    private func messageRow(_ message: PhoneAssistantHistory.Message) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(message.role == "user" ? "You" : message.role == "action" ? "App activity" : "OpenTalon")
+                .font(.caption.weight(.semibold)).foregroundStyle(colors.muted)
+            Text(message.text).textSelection(.enabled).accessibilityIdentifier("assistantMessage-" + message.role)
+            if let taskID = message.taskID {
+                HStack {
+                    Button("Open task") { openedTask = taskID }
+                    if message.planMarkdown != nil {
+                        Button("Review plan") { openProposal(message) }
+                    }
+                }
+            }
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        .background(colors.card, in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private var composer: some View {
+        HStack(alignment: .bottom, spacing: 12) {
+            TextField("Ask about your tasks or tell me what to change", text: $input, axis: .vertical)
+                .lineLimit(1...4).focused($inputFocused)
+                .padding(12).background(colors.card, in: RoundedRectangle(cornerRadius: 14))
+                .accessibilityIdentifier("assistantInput")
+            if generation != nil {
+                Button("Stop") { generation?.cancel() }
+            } else {
+                Button("Send", action: send)
+                    .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !history.canWrite ||
+                              TaskDrafting.unavailableReason != nil || input.utf16.count > 2_000)
+            }
+        }
+        .padding(20)
+    }
+
+    private func send() {
+        let message = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard generation == nil, !message.isEmpty, message.utf16.count <= 2_000, history.canWrite,
+              workspace.snapshot?.workspaceID == workspaceID else { return }
+        guard #available(iOS 26, *) else { return }
+        error = nil; results = [:]; inputFocused = false
+        do { try history.append(.init(role: "user", text: message)) }
+        catch { self.error = error.localizedDescription; return }
+        input = ""
+        let recent = (history.current?.messages.dropLast().suffix(6) ?? []).map { "\($0.role): \($0.text)" }.joined(separator: "\n")
+        generation = Task {
+            defer { generation = nil }
+            do {
+                let response = try await OnDeviceTaskAssistant.respond(to: message, history: recent, search: search) { command in
+                    try await execute(command, requestedBy: message)
+                }
+                if history.current?.messages.last?.text != response {
+                    try history.append(.init(role: "assistant", text: response))
+                }
+            } catch is CancellationError {
+                try? history.append(.init(role: "assistant", text: "Stopped. Any changes already listed in App activity remain saved."))
+            } catch {
+                self.error = error.localizedDescription
+                try? history.append(.init(role: "assistant", text: "I couldn’t finish this reply. Check App activity for any changes already queued."))
+            }
+        }
+    }
+
+    private func search(_ query: String) throws -> String {
+        guard let snapshot = workspace.snapshot, snapshot.workspaceID == workspaceID else { throw CompanionSyncError.missingWorkspace }
+        let query = TaskReference.normalized(in: query) ?? query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = query.split(whereSeparator: \.isWhitespace).map(String.init)
+            .filter { !["task", "tasks", "my", "the", "all"].contains($0.lowercased()) }
+        let matches = workspace.newestTasks(workspace.visibleTasks.filter { task in
+            if query.isEmpty { return !workspace.isArchived(task) && workspace.displayedStatus(for: task) != .done }
+            let fields = [task.id, task.taskKey ?? "", task.displayTaskID ?? "", workspace.displayedText(for: task, field: .title),
+                          workspace.projectName(workspace.displayedProject(for: task)), task.notes,
+                          workspace.displayedStatus(for: task).rawValue, workspace.displayedPriority(for: task).rawValue,
+                          workspace.displayedPriority(for: task) == .urgent ? "critical" : ""]
+            return words.allSatisfy { word in fields.contains { $0.localizedStandardContains(word) } }
+        })
+        let tasks: [[String: Any]] = matches.prefix(8).map { task in
+            ["id": task.id, "taskID": task.displayTaskID ?? "", "title": workspace.displayedText(for: task, field: .title),
+             "projectID": workspace.displayedProject(for: task),
+             "projectName": workspace.projectName(workspace.displayedProject(for: task)),
+             "status": workspace.displayedStatus(for: task).rawValue,
+             "priority": workspace.displayedPriority(for: task).rawValue,
+             "dueDate": workspace.displayedDueDate(for: task) ?? "", "archived": workspace.isArchived(task),
+             "notes": matches.count == 1 ? String(workspace.displayedText(for: task, field: .notes).prefix(800)) : "Search by task ID to read notes.",
+             "planMarkdown": matches.count == 1 ? String(workspace.displayedPlan(for: task).prefix(2_000)) : "Search by task ID to read the plan.",
+             "planCharacters": workspace.displayedPlan(for: task).utf16.count]
+        }
+        let data: [String: Any] = ["projects": snapshot.projects.prefix(20).map { ["id": $0.id, "name": $0.name] }, "tasks": tasks,
+                                  "matchingCount": matches.count, "shownCount": tasks.count]
+        return String(decoding: try JSONSerialization.data(withJSONObject: data), as: UTF8.self)
+    }
+
+    private func execute(_ command: TaskAssistantCommand, requestedBy message: String) async throws -> String {
+        try Task.checkCancellation()
+        guard let snapshot = workspace.snapshot, snapshot.workspaceID == workspaceID, snapshot.supportsTaskPlans else {
+            throw AssistantError.message("Update OpenTalon on your Mac and sync before using assistant actions.")
+        }
+        if let previous = results[command] { return previous }
+        guard results.count < 8, command.value.utf16.count <= 100_000, command.notes.utf16.count <= 100_000 else {
+            throw AssistantError.message("Make fewer changes in one message, or shorten the text.")
+        }
+        let result: String
+        if command.operation == "createProject" {
+            let name = command.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, name.utf16.count <= 100, message.localizedStandardContains(name) else {
+                throw AssistantError.message("Ask the user for the new project's name.")
+            }
+            try workspace.queue(.createProject(name: name))
+            result = "Project \(name) queued for Mac."
+        } else if command.operation == "create" {
+            let title = command.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty, title.utf16.count <= 500, let first = snapshot.projects.first else {
+                throw AssistantError.message("A task needs a title of no more than 500 characters and an available project.")
+            }
+            let existing = snapshot.projects.first { $0.id == command.project || $0.name.localizedCompare(command.project) == .orderedSame }
+            let personal = snapshot.projects.first { $0.name.caseInsensitiveCompare("Personal") == .orderedSame }
+            let newProject: String?
+            if existing == nil, !command.project.isEmpty {
+                guard command.project.utf16.count <= 100, message.localizedStandardContains(command.project) else {
+                    throw AssistantError.message("Ask the user which project to use.")
+                }
+                newProject = command.project
+            } else { newProject = existing == nil && personal == nil ? "Personal" : nil }
+            let plan = TaskPlan.requested(in: message) && !command.planMarkdown.isEmpty ? command.planMarkdown : nil
+            if let plan { try TaskPlan.validate(plan) }
+            try workspace.queue(.create(projectID: existing?.id ?? personal?.id ?? first.id, title: title,
+                                        notes: command.notes, priority: TaskDrafting.capturePriority(in: message),
+                                        sendToAgent: false, newProjectName: newProject, planMarkdown: plan))
+            result = "Task \(title) saved locally and queued for Mac. Its task ID will appear after the Mac accepts it."
+        } else {
+            guard let task = snapshot.tasks.first(where: {
+                $0.id == command.taskID || $0.displayTaskID?.caseInsensitiveCompare(command.taskID) == .orderedSame
+            }), !workspace.isTrashed(task) else { throw AssistantError.message("That task isn't available. Search again and use an exact task ID.") }
+            switch command.operation {
+            case "project":
+                guard let project = snapshot.projects.first(where: { $0.id == command.value }) else {
+                    throw AssistantError.message("Choose an existing project returned by search.")
+                }
+                try workspace.queueField(.project(project.id), for: task, in: workspaceID)
+            case "priority":
+                guard let priority = PhoneTask.Priority(rawValue: command.value) else { throw AssistantError.message("Choose a valid priority.") }
+                try workspace.queueField(.priority(priority), for: task, in: workspaceID)
+            case "status":
+                guard let status = PhoneTask.Status(rawValue: command.value), status != .sent else {
+                    throw AssistantError.message("Use To do, In progress or Done. Sending to an agent needs the send dialog.")
+                }
+                if status == .done, workspace.completionNeedsConfirmation(for: task) {
+                    review = Review(task: task, operation: "done")
+                    showReviewConfirmation = true
+                    result = "Waiting for the user's Mark Done confirmation."
+                    results[command] = result
+                    return result
+                }
+                try workspace.queueField(.status(status), for: task, in: workspaceID)
+            case "dueDate":
+                let date = command.value.isEmpty ? nil : command.value
+                guard date == nil || date.flatMap(CalendarDay.date).map(CalendarDay.key) == date else {
+                    throw AssistantError.message("Choose a valid YYYY-MM-DD due date.")
+                }
+                try workspace.queueField(.dueDate(date), for: task, in: workspaceID)
+            case "title":
+                guard !command.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, command.value.utf16.count <= 500 else {
+                    throw AssistantError.message("Keep the task title between 1 and 500 characters.")
+                }
+                try workspace.queueField(.title(command.value), for: task, in: workspaceID)
+            case "notes": try workspace.queueField(.notes(command.value), for: task, in: workspaceID)
+            case "definitionOfDone":
+                guard command.value.utf16.count <= 10_000 else { throw AssistantError.message("Keep the definition of done to 10,000 characters.") }
+                try workspace.queueField(.definitionOfDone(command.value), for: task, in: workspaceID)
+            case "plan":
+                guard workspace.displayedPlan(for: task).utf16.count <= 2_000 else {
+                    throw AssistantError.message("This plan is too long to revise safely in chat. Open the task's Plan editor to revise the complete document.")
+                }
+                guard !command.planMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw AssistantError.message("Provide the complete proposed Markdown plan.")
+                }
+                try TaskPlan.validate(command.planMarkdown)
+                try history.append(.init(role: "plan", text: "A proposed plan is ready to review. The saved plan is unchanged.",
+                                         taskID: task.id, planMarkdown: command.planMarkdown,
+                                         expectedMarkdown: workspace.displayedPlan(for: task)))
+                result = "Plan proposal ready. The user must open Review plan, apply the revision and Save."
+                results[command] = result
+                return result
+            case "send", "archive", "trash":
+                guard !showReviewConfirmation && review?.operation != "send" else {
+                    throw AssistantError.message("Finish the current review dialog before starting another.")
+                }
+                review = Review(task: task, operation: command.operation)
+                showReviewConfirmation = command.operation != "send"
+                result = "Waiting for the user to finish the \(command.operation) dialog. No action has been sent yet."
+                results[command] = result
+                return result
+            default: throw AssistantError.message("That operation isn't supported.")
+            }
+            let detail = ["priority", "status", "dueDate", "title"].contains(command.operation) && !command.value.isEmpty
+                ? " → \(command.value)" : ""
+            result = "\(task.displayTaskID ?? task.title): \(command.operation)\(detail) saved locally and queued for Mac."
+            try history.append(.init(role: "action", text: result, taskID: task.id))
+        }
+        if command.operation == "create" || command.operation == "createProject" { try history.append(.init(role: "action", text: result)) }
+        results[command] = result
+        return result
+    }
+
+    private func openProposal(_ message: PhoneAssistantHistory.Message) {
+        guard let task = workspace.snapshot?.tasks.first(where: { $0.id == message.taskID }),
+              let plan = message.planMarkdown, let original = message.expectedMarkdown else { return }
+        guard workspace.displayedPlan(for: task) == original else {
+            error = "The saved plan changed after this proposal. Ask for a fresh revision; this proposal remains in your chat."
+            return
+        }
+        proposedPlan = ProposedPlan(task: task, original: original, proposed: plan)
+    }
+
+    private var confirmationTitle: String {
+        review?.operation == "done" ? "Mark this task done anyway?" : review?.operation == "archive" ? "Archive this task?" : "Send this task to Trash?"
+    }
+    private var confirmationButton: String {
+        review?.operation == "done" ? "Mark Done" : review?.operation == "archive" ? "Archive Task" : "Send to Trash"
+    }
+    private var confirmationMessage: String {
+        guard let review else { return "" }
+        return "\(review.task.title)\nAny active agent run will stop."
+    }
+    private func confirmReview() {
+        guard let review, let snapshot = workspace.snapshot, snapshot.workspaceID == workspaceID,
+              let task = snapshot.tasks.first(where: { $0.id == review.task.id }) else { return }
+        do {
+            if review.operation == "done" { try workspace.markDone(task) }
+            else { try workspace.queue(.organizeTask(taskID: task.id, destination: review.operation == "archive" ? .archive : .trash)) }
+            try history.append(.init(role: "action", text: "\(confirmationButton) confirmed and queued for Mac.", taskID: task.id))
+        } catch { self.error = error.localizedDescription }
+        self.review = nil
+    }
+
+    private enum AssistantError: LocalizedError {
+        case message(String)
+        var errorDescription: String? { if case .message(let text) = self { text } else { "Try again." } }
     }
 }
 

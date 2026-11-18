@@ -11,7 +11,7 @@ const {
   restoreComments,
 } = require('./comments.cjs')
 
-const FORMAT = 7
+const FORMAT = 8
 const archiveAfterMs = 7 * 24 * 60 * 60 * 1000
 const taskKeyPattern = /^[A-Z]{3}-[0-9]{3,16}$/
 const defaultAgentSettings = { defaultAgent: 'codex', workingFolder: '' }
@@ -64,6 +64,7 @@ function taskView(row) {
     boardId: row.board_id,
     title: row.title,
     notes: row.notes,
+    planMarkdown: row.plan_markdown || '',
     status: row.status,
     priority: row.priority || 'None',
     definitionOfDone: row.definition_of_done || '',
@@ -166,6 +167,7 @@ class Store {
       if (current < 5) this.migrateDueDates()
       if (current < 6) this.migrateTaskKeys()
       if (current < 7) this.migrateArchive()
+      if (current < 8) this.migratePlans()
       this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;')
       fs.chmodSync(this.file, 0o600)
     } catch (error) {
@@ -272,6 +274,18 @@ class Store {
         PRAGMA user_version=7;
       `)
       this.db.prepare('INSERT INTO schema_migrations VALUES (?,?)').run(7, new Date().toISOString())
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  migratePlans() {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      this.db.exec("ALTER TABLE tasks ADD COLUMN plan_markdown TEXT NOT NULL DEFAULT '' CHECK(length(plan_markdown)<=100000); PRAGMA user_version=8;")
+      this.db.prepare('INSERT INTO schema_migrations VALUES (?,?)').run(8, new Date().toISOString())
       this.db.exec('COMMIT')
     } catch (error) {
       this.db.exec('ROLLBACK')
@@ -888,6 +902,10 @@ class Store {
     return job
   }
   async execute(name, a) {
+    const markdown = name === 'set_task_plan' ? a.markdown : a.planMarkdown
+    if (markdown !== undefined && (typeof markdown !== 'string' || markdown.length > 100000 ||
+        !markdown.isWellFormed() || markdown.includes('\0')))
+      throw new AppError('INVALID_ARGUMENT', 'Use valid Markdown text with no more than 100,000 characters.')
     if (a.dueDate !== undefined && !validDueDate(a.dueDate))
       throw new AppError(
         'INVALID_ARGUMENT',
@@ -1195,6 +1213,8 @@ class Store {
             a.dueDate || null
           )
         this.assignTaskKey(id, boardId)
+        if (a.planMarkdown !== undefined)
+          this.db.prepare('UPDATE tasks SET plan_markdown=? WHERE id=?').run(a.planMarkdown, id)
         result = { task: this.task(id) }
         if ((a.agent || a.model || a.dispatchComment !== undefined) && status !== 'Sent to agent')
           throw new AppError('INVALID_ARGUMENT', 'Agent options and dispatch comments require sending a task.')
@@ -1210,6 +1230,8 @@ class Store {
             task.title = a.title
           }
           if (a.notes !== undefined) task.notes = a.notes
+          if (a.planMarkdown !== undefined)
+            this.db.prepare('UPDATE tasks SET plan_markdown=? WHERE id=?').run(a.planMarkdown, task.id)
           if (a.priority !== undefined) task.priority = a.priority
           if (a.definitionOfDone !== undefined) task.definitionOfDone = a.definitionOfDone
           if (a.dueDate !== undefined) task.dueDate = a.dueDate
@@ -1241,6 +1263,13 @@ class Store {
           )
         }
         result = { task }
+      } else if (name === 'set_task_plan') {
+        const task = this.task(a.id)
+        if (task.deleted) throw new AppError('IN_TRASH', 'Restore the task before editing its plan.')
+        if (task.planMarkdown !== a.expectedMarkdown)
+          throw new AppError('CONFLICT', 'The plan changed on another device. Your draft is preserved; review both versions before saving.')
+        this.db.prepare('UPDATE tasks SET plan_markdown=? WHERE id=?').run(a.markdown, task.id)
+        result = { task: this.saveTask(task, revision) }
       } else if (name === 'companion_organize_task') {
         let task = this.task(a.id)
         if (task.deleted) throw new AppError('IN_TRASH', 'Restore the task from Trash first.')
@@ -1330,7 +1359,7 @@ class Store {
               .run(board.id, board.name, board.position, board.created_at, revision, board.project_key, board.next_task_number)
           for (const task of restore.tasks)
             this.db
-              .prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+              .prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
               .run(
                 task.id,
                 task.board_id,
@@ -1347,7 +1376,8 @@ class Store {
                 task.due_date,
                 task.task_key,
                 task.completed_at,
-                task.archived_at
+                task.archived_at,
+                task.plan_markdown
               )
           this.backfillTaskKeys()
           restoreComments(this, restore.comments, restore.commentImages)
@@ -1530,7 +1560,7 @@ class Store {
             'This backup needs a newer OpenTalon. Current data is unchanged.'
           )
         if (
-          ![1, 2, 3, 4, 5, 6, FORMAT].includes(payload.formatVersion) ||
+          ![1, 2, 3, 4, 5, 6, 7, FORMAT].includes(payload.formatVersion) ||
           !Array.isArray(payload.boards) ||
           !Array.isArray(payload.tasks) ||
           !payload.preferences ||
@@ -1560,7 +1590,7 @@ class Store {
             'This backup needs a newer OpenTalon. Current data is unchanged.'
           )
         if (
-          ![1, 2, 3, 4, 5, 6, FORMAT].includes(format) ||
+          ![1, 2, 3, 4, 5, 6, 7, FORMAT].includes(format) ||
           db.prepare('PRAGMA application_id').get().application_id !== APPLICATION_ID
         )
           throw new AppError('INVALID_BACKUP', 'This is not a supported OpenTalon backup.')
@@ -1607,6 +1637,7 @@ class Store {
         task_key: format < 6 ? null : task?.task_key,
         completed_at: format < 7 ? (task?.status === 'Done' ? task.updated_at : null) : task?.completed_at,
         archived_at: format < 7 ? null : task?.archived_at,
+        plan_markdown: format < 8 ? '' : task?.plan_markdown,
       }))
       if (ids.size !== boards.length || new Set(tasks.map((task) => task.id)).size !== tasks.length)
         throw new AppError('INVALID_BACKUP', 'This backup contains duplicate record IDs.')
@@ -1642,6 +1673,8 @@ class Store {
           task.title.length > 500 ||
           typeof task.notes !== 'string' ||
           task.notes.length > 100000 ||
+          typeof task.plan_markdown !== 'string' || task.plan_markdown.length > 100000 ||
+          !task.plan_markdown.isWellFormed() || task.plan_markdown.includes('\0') ||
           !statuses.includes(task.status) ||
           !priorities.includes(task.priority) ||
           typeof task.definition_of_done !== 'string' ||

@@ -202,6 +202,9 @@ ${task.definitionOfDone || 'Complete the requested outcome, verify it with relev
 Notes:
 ${task.notes || '(No notes)'}
 
+Plan (Markdown):
+${task.planMarkdown || '(No plan attached)'}
+
 Use the opentalon MCP connection to read get_task with this task ID before doing work. Read list_task_comments for this task too, including manually saved notes, and use read_comment_image for any attached screenshots. Call report_agent_progress with runId ${job.id}, a fresh requestKey, state working, and a brief summary when starting. Report needs-input if clarification or approval is needed. Before reporting done, re-read the current task and comments, complete its definition of done and verify the requested outcome. Then call report_agent_progress with state done, summary, proof and definitionOfDoneMet true. Proof MUST explain how the criteria were met and include concrete evidence: commands/checks and their actual results, deliverable paths or links, or screenshot comment IDs appropriate to this task. The app posts this report on the ticket before moving it to Done. Never invent evidence, claim unrun checks passed, or use move_task/update_task to bypass the completion report. If any requirement or verification remains incomplete, report needs-input or failed and keep the task open. A response ending does not by itself complete the task. Do not dispatch more agents, change other tasks, commit, push, publish, or delete data unless the task and user instructions explicitly authorize it. If the task was moved away or the run is inactive, stop work.`
 }
 

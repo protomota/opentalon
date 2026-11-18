@@ -66,6 +66,24 @@ Capture a task on iPhone, then review the project on iPad. The companion syncs t
 
 *Native app screenshots use sample tasks.*
 
+## Keep a Markdown plan with the task
+
+Add a plan when creating a task, or open **Plan** below Notes and Definition of Done. Read the preview, edit the Markdown source, and import or export a `.md` file. Plans travel with the task through project changes, Archive, Trash, restore and backups, and are included when you send work to an agent.
+
+On supported Apple Intelligence devices, proofread a plan or describe a revision. Review the suggestion, choose **Apply to draft**, then **Save**. The saved document stays unchanged until you save; conflicting edits keep your draft for review.
+
+<table>
+  <tr><th>Markdown plan preview</th><th>Review an AI revision</th></tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/iphone-plan.webp" alt="A task plan preview with a checklist and code block" width="230"></td>
+    <td align="center"><img src="docs/screenshots/iphone-plan-review.webp" alt="An AI plan suggestion with Discard and Apply to draft controls" width="230"></td>
+  </tr>
+</table>
+
+The sparkle button on iPhone and iPad opens **Ask OpenTalon**. Find tasks, create work, change task fields, or propose a plan by chatting. Requests run through the app's existing controls; sending to an agent still opens the agent, model and comment dialog. Keep multiple local chats, start a new one, or delete individual chats or all history without deleting your tasks.
+
+Apple Intelligence uses the on-device system model on supported hardware with OS version 26 or later. Manual plan editing also works without it. Mobile changes save locally and queue for the Mac through private iCloud sync; both apps must be updated for plans.
+
 ## Build the Mac app
 
 On an Apple Silicon Mac with Xcode and ImageMagick, run these commands from the repository root.

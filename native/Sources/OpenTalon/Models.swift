@@ -63,6 +63,7 @@ struct WorkItem: Codable, Identifiable, Equatable {
     let boardId: String
     let title: String
     let notes: String
+    let planMarkdown: String?
     let status: WorkStatus
     let priority: Priority
     let definitionOfDone: String

@@ -2,6 +2,51 @@ import Foundation
 import Testing
 @testable import CompanionCore
 
+@Test func markdownCodeFencesKeepNestedMarkersInsideTheCodeBlock() {
+    let fence = PlanCodeFence("````swift")!
+    #expect(!fence.closes(with: "```"))
+    #expect(!fence.closes(with: "~~~~"))
+    #expect(!fence.closes(with: "````comment"))
+    #expect(fence.closes(with: "  `````  "))
+    #expect(PlanCodeFence("~~~swift")!.closes(with: "~~~"))
+    #expect(PlanCodeFence("`inline`") == nil)
+}
+
+@Test func markdownPlansKeepUnicodeAndSafeFilenamesAndRejectInvalidDocuments() throws {
+    let markdown = "# Plan\n\n- [ ] Review café notes.\n\n```swift\nprint(\"hello\")\n```\n"
+    #expect(try TaskPlan.decode(Data(markdown.utf8)) == markdown)
+    #expect(TaskPlan.filename(reference: "ink-001") == "INK-001-plan.md")
+    #expect(!TaskPlan.filename(reference: "../../file").contains("/"))
+    #expect(throws: TaskPlan.PlanError.self) { try TaskPlan.decode(Data([0xff, 0xfe, 0x00])) }
+    #expect(throws: TaskPlan.PlanError.self) { try TaskPlan.validate("a\0b") }
+    #expect(throws: TaskPlan.PlanError.self) { try TaskPlan.validate(String(repeating: "x", count: 100_001)) }
+    #expect(TaskPlan.requested(in: "Create a task with a plan to review the launch"))
+    #expect(!TaskPlan.requested(in: "Review the planet illustration"))
+    #expect(TaskReference.normalized(in: "Set ink-1 priority to High") == "INK-001")
+    #expect(TaskReference.normalized(in: "Open INK–001") == "INK-001")
+    #expect(TaskReference.normalized(in: "01a1cbb7-abc-1234-8610-89b71dfe8a4a") == nil)
+}
+
+@Test func planRequestsRetainExpectedContentAndUpgradeOlderSnapshots() throws {
+    let workspace = UUID()
+    let old = PhoneSnapshot(workspaceID: workspace, revision: 3, projects: [], tasks: [])
+    let upgraded = PhoneSnapshot(workspaceID: workspace, revision: 3, projects: [], tasks: [], supportsTaskPlans: true)
+    #expect(!old.supportsTaskPlans)
+    #expect(upgraded.shouldReplace(old))
+    let request = PhoneRequest(workspaceID: workspace, action: .savePlan(taskID: "stable-task-id", expectedMarkdown: "# Original", markdown: "# Revised"))
+    let restored = try JSONDecoder().decode(PhoneRequest.self, from: JSONEncoder().encode(request))
+    #expect(restored.id == request.id)
+    #expect(restored.taskID == "stable-task-id")
+    guard case .savePlan(_, let expected, let markdown) = restored.action else { Issue.record("Wrong plan action"); return }
+    #expect(expected == "# Original")
+    #expect(markdown == "# Revised")
+    let capture = PhoneRequest(workspaceID: workspace, action: .create(projectID: "personal", title: "Task", notes: "Summary", priority: .medium,
+                                                                       sendToAgent: false, planMarkdown: "# Steps"))
+    let saved = try JSONDecoder().decode(PhoneRequest.self, from: JSONEncoder().encode(capture))
+    guard case .create(_, _, _, _, _, _, _, _, _, _, let plan) = saved.action else { Issue.record("Wrong create action"); return }
+    #expect(plan == "# Steps")
+}
+
 @Test func taskOrganizationCapabilityAndRequestsRoundTrip() throws {
     let workspace = UUID()
     let legacy = PhoneSnapshot(workspaceID: workspace, revision: 7, projects: [], tasks: [])
@@ -71,7 +116,7 @@ import Testing
     ))
     let data = try JSONEncoder().encode(request)
     let restored = try JSONDecoder().decode(PhoneRequest.self, from: data)
-    guard case .create(_, _, _, _, _, let criteria, _, _, _, _) = restored.action else {
+    guard case .create(_, _, _, _, _, let criteria, _, _, _, _, _) = restored.action else {
         Issue.record("The queued ticket did not decode as a creation request.")
         return
     }
@@ -88,7 +133,7 @@ import Testing
     }
     """
     let previous = try JSONDecoder().decode(PhoneRequest.self, from: Data(legacy.utf8))
-    guard case .create(_, let title, _, _, _, let legacyCriteria, _, _, let legacyComment, let newProject) = previous.action else {
+    guard case .create(_, let title, _, _, _, let legacyCriteria, _, _, let legacyComment, let newProject, _) = previous.action else {
         Issue.record("The older creation request did not decode.")
         return
     }

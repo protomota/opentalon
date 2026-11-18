@@ -268,7 +268,7 @@ test('due dates survive editing, restart, both backup formats and v4 migration; 
   const backup = await f.write('create_backup', { format: 'sqlite' })
   const db = new DatabaseSync(backup.path)
   db.exec(
-    'DROP TRIGGER tasks_record_completion_on_insert; DROP TRIGGER tasks_record_completion_on_move; ALTER TABLE tasks DROP COLUMN completed_at; ALTER TABLE tasks DROP COLUMN archived_at; DROP INDEX tasks_task_key; DROP INDEX boards_project_key; ALTER TABLE tasks DROP COLUMN task_key; ALTER TABLE boards DROP COLUMN project_key; ALTER TABLE boards DROP COLUMN next_task_number; ALTER TABLE tasks DROP COLUMN due_date; DELETE FROM schema_migrations WHERE version>=5; PRAGMA user_version=4;'
+    'ALTER TABLE tasks DROP COLUMN plan_markdown; DROP TRIGGER tasks_record_completion_on_insert; DROP TRIGGER tasks_record_completion_on_move; ALTER TABLE tasks DROP COLUMN completed_at; ALTER TABLE tasks DROP COLUMN archived_at; DROP INDEX tasks_task_key; DROP INDEX boards_project_key; ALTER TABLE tasks DROP COLUMN task_key; ALTER TABLE boards DROP COLUMN project_key; ALTER TABLE boards DROP COLUMN next_task_number; ALTER TABLE tasks DROP COLUMN due_date; DELETE FROM schema_migrations WHERE version>=5; PRAGMA user_version=4;'
   )
   db.close()
   assert.equal((await f.store.inspect(backup.path)).tasks[0].due_date, null)
@@ -426,7 +426,7 @@ test('priority filtering/sorting and definitions persist, restore and migrate fr
   const backup = await f.write('create_backup', { format: 'sqlite' })
   const db = new DatabaseSync(backup.path)
   db.exec(
-    'DROP TRIGGER tasks_record_completion_on_insert; DROP TRIGGER tasks_record_completion_on_move; ALTER TABLE tasks DROP COLUMN completed_at; ALTER TABLE tasks DROP COLUMN archived_at; DROP INDEX tasks_task_key; DROP INDEX boards_project_key; ALTER TABLE tasks DROP COLUMN task_key; ALTER TABLE boards DROP COLUMN project_key; ALTER TABLE boards DROP COLUMN next_task_number; ALTER TABLE tasks DROP COLUMN due_date; ALTER TABLE tasks DROP COLUMN priority; ALTER TABLE tasks DROP COLUMN definition_of_done; DELETE FROM schema_migrations WHERE version>=4; PRAGMA user_version=3;'
+    'ALTER TABLE tasks DROP COLUMN plan_markdown; DROP TRIGGER tasks_record_completion_on_insert; DROP TRIGGER tasks_record_completion_on_move; ALTER TABLE tasks DROP COLUMN completed_at; ALTER TABLE tasks DROP COLUMN archived_at; DROP INDEX tasks_task_key; DROP INDEX boards_project_key; ALTER TABLE tasks DROP COLUMN task_key; ALTER TABLE boards DROP COLUMN project_key; ALTER TABLE boards DROP COLUMN next_task_number; ALTER TABLE tasks DROP COLUMN due_date; ALTER TABLE tasks DROP COLUMN priority; ALTER TABLE tasks DROP COLUMN definition_of_done; DELETE FROM schema_migrations WHERE version>=4; PRAGMA user_version=3;'
   )
   db.close()
   const legacy = await f.store.inspect(backup.path)

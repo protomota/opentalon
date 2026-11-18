@@ -44,6 +44,7 @@ final class PhoneWorkspace {
         let notes: String
         let definitionOfDone: String?
         let priority: PhoneTask.Priority
+        let planMarkdown: String?
         var result: Result = .queued
         var dismissed = false
     }
@@ -54,6 +55,11 @@ final class PhoneWorkspace {
         var errorDescription: String? { "Wait for the current task change to sync with your Mac." }
     }
 
+    enum PlanConflict: LocalizedError {
+        case changed
+        var errorDescription: String? { "The plan changed while you were editing. Your draft is preserved. Reopen it to review the saved version before applying your changes." }
+    }
+
     private struct LocalState: Codable {
         var snapshot: PhoneSnapshot?
         var pending: [PhoneRequest] = []
@@ -61,6 +67,7 @@ final class PhoneWorkspace {
         var rejected: String?
         var commentDrafts: [String: String]?
         var unsavedNotes: [String: UnsavedNotes]?
+        var planDrafts: [String: String]?
         var capturedTask: CapturedTask?
     }
 
@@ -119,6 +126,12 @@ final class PhoneWorkspace {
     func queue(_ action: PhoneRequest.Action) throws {
         guard let snapshot else { throw CompanionSyncError.missingWorkspace }
         let request = PhoneRequest(workspaceID: snapshot.workspaceID, action: action)
+        if case .savePlan(_, _, let markdown) = action {
+            guard snapshot.supportsTaskPlans else { throw CompanionSyncError.missingWorkspace }
+            try TaskPlan.validate(markdown)
+            try enqueue(request, in: state)
+            return
+        }
         if case .organizeTask = action {
             guard snapshot.supportsTaskOrganization else { throw CompanionSyncError.missingWorkspace }
             guard !taskChanges(for: request.taskID ?? "").contains(where: {
@@ -150,6 +163,9 @@ final class PhoneWorkspace {
             case .status: displayedStatus(for: current).rawValue
             case .priority: displayedPriority(for: current).rawValue
             case .dueDate: displayedDueDate(for: current)
+            case .title: displayedText(for: current, field: .title)
+            case .notes: displayedText(for: current, field: .notes)
+            case .definitionOfDone: displayedText(for: current, field: .definitionOfDone)
             }
             guard expected != edit.value else { return }
             try enqueue(PhoneRequest(workspaceID: workspaceID,
@@ -222,9 +238,9 @@ final class PhoneWorkspace {
     private func enqueue(_ request: PhoneRequest, in state: LocalState) throws {
         var updated = state
         updated.pending.append(request)
-        if case .create(let project, let title, let notes, let priority, _, let definition, _, _, _, let newProject) = request.action {
+        if case .create(let project, let title, let notes, let priority, _, let definition, _, _, _, let newProject, let plan) = request.action {
             updated.capturedTask = CapturedTask(id: request.id, title: title, project: newProject ?? projectName(project),
-                                               notes: notes, definitionOfDone: definition, priority: priority)
+                                               notes: notes, definitionOfDone: definition, priority: priority, planMarkdown: plan)
         }
         try save(updated)
         Task { await sync() }
@@ -312,6 +328,10 @@ final class PhoneWorkspace {
                             updated.unsavedNotes = updated.unsavedNotes ?? [:]
                             updated.unsavedNotes?[taskID] = UnsavedNotes(text: notes, message: message)
                         }
+                        if case .savePlan(let taskID, _, let markdown) = request.action {
+                            updated.planDrafts = updated.planDrafts ?? [:]
+                            updated.planDrafts?[taskID] = markdown
+                        }
                     }
                     try save(updated)
                     if receipt.outcome == .applied {
@@ -383,8 +403,54 @@ final class PhoneWorkspace {
     func pendingNotes(for taskID: String) -> String? {
         taskChanges(for: taskID).reversed().compactMap { request -> String? in
             if case .editNotes(_, _, let notes) = request.action { return notes }
+            if case .setField(_, _, .notes(let notes)) = request.action { return notes }
             return nil
         }.first
+    }
+
+    func displayedText(for task: PhoneTask, field: PhoneTaskFieldEdit.Field) -> String {
+        if let edit = pendingField(for: task.id, field: field), let text = edit.value { return text }
+        switch field {
+        case .title: return task.title
+        case .notes: return pendingNotes(for: task.id) ?? task.notes
+        case .definitionOfDone: return task.definitionOfDone
+        default: return ""
+        }
+    }
+
+    func displayedPlan(for task: PhoneTask) -> String {
+        for request in taskChanges(for: task.id).reversed() {
+            if case .savePlan(_, _, let markdown) = request.action { return markdown }
+        }
+        return task.planMarkdown ?? ""
+    }
+
+    func planDraft(for taskID: String) -> String? { state.planDrafts?[taskID] }
+
+    func hasPendingPlan(for taskID: String) -> Bool {
+        taskChanges(for: taskID).contains { if case .savePlan = $0.action { true } else { false } }
+    }
+
+    func savePlanDraft(_ markdown: String?, for taskID: String, in workspaceID: UUID) throws {
+        guard snapshot?.workspaceID == workspaceID else { throw CompanionSyncError.missingWorkspace }
+        var updated = state
+        updated.planDrafts = updated.planDrafts ?? [:]
+        updated.planDrafts?[taskID] = markdown
+        try save(updated)
+    }
+
+    func savePlan(_ markdown: String, expected: String, for taskID: String, in workspaceID: UUID) throws {
+        guard snapshot?.workspaceID == workspaceID, snapshot?.supportsTaskPlans == true else {
+            throw CompanionSyncError.missingWorkspace
+        }
+        try TaskPlan.validate(markdown)
+        guard let task = snapshot?.tasks.first(where: { $0.id == taskID }), displayedPlan(for: task) == expected else {
+            throw PlanConflict.changed
+        }
+        var updated = state
+        updated.planDrafts?.removeValue(forKey: taskID)
+        try enqueue(PhoneRequest(workspaceID: workspaceID,
+                                 action: .savePlan(taskID: taskID, expectedMarkdown: expected, markdown: markdown)), in: updated)
     }
 
     private func pendingField(for taskID: String, field: PhoneTaskFieldEdit.Field) -> PhoneTaskFieldEdit? {
@@ -515,13 +581,14 @@ final class PhoneWorkspace {
 
     func title(for request: PhoneRequest) -> String {
         switch request.action {
-        case .create(_, let title, _, _, _, _, _, _, _, _): title
+        case .createProject(let name): name
+        case .create(_, let title, _, _, _, _, _, _, _, _, _): title
         case .emptyTrash: "Trash"
         case .manageArchive: "Archive"
         case .restoreTrashed(let id, _): snapshot?.trashedTasks?.first(where: { $0.id == id })?.title ?? "Task"
         case .send(let id, _, _), .complete(let id, _), .comment(let id, _), .editNotes(let id, _, _),
              .editField(let id, _, _), .setField(let id, _, _), .forceComplete(let id), .removeArchived(let id, _, _),
-             .reorderTask(let id, _, _, _, _), .organizeTask(let id, _):
+             .reorderTask(let id, _, _, _, _), .organizeTask(let id, _), .savePlan(let id, _, _):
             snapshot?.tasks.first(where: { $0.id == id })?.title ?? "Task"
         }
     }
@@ -554,5 +621,93 @@ final class PhoneWorkspace {
         try directory.setResourceValues(values)
         try JSONEncoder().encode(updated).write(to: cacheURL(account), options: [.atomic, .completeFileProtection])
         state = updated
+    }
+}
+
+@MainActor
+@Observable
+final class PhoneAssistantHistory {
+    struct Message: Codable, Identifiable {
+        let id: UUID
+        let role: String
+        let text: String
+        let taskID: String?
+        let planMarkdown: String?
+        let expectedMarkdown: String?
+        init(role: String, text: String, taskID: String? = nil, planMarkdown: String? = nil, expectedMarkdown: String? = nil) {
+            id = UUID(); self.role = role; self.text = text; self.taskID = taskID
+            self.planMarkdown = planMarkdown; self.expectedMarkdown = expectedMarkdown
+        }
+    }
+    struct Chat: Codable, Identifiable {
+        let id: UUID
+        var title: String
+        var messages: [Message]
+    }
+    private struct Saved: Codable { var chats: [Chat]; var selected: UUID? }
+    private(set) var chats: [Chat] = []
+    private(set) var selected: UUID?
+    private(set) var error: String?
+    private let file: URL
+    private var unreadable = false
+
+    init(workspaceID: UUID) {
+        file = URL.applicationSupportDirectory.appending(path: "OpenTalonCompanion/Assistant/\(workspaceID.uuidString).json")
+        do {
+            let saved = try JSONDecoder().decode(Saved.self, from: Data(contentsOf: file))
+            chats = saved.chats; selected = saved.selected
+        } catch let failure as CocoaError where failure.code == .fileReadNoSuchFile { }
+        catch {
+            unreadable = true
+            self.error = "Couldn’t read saved chats. The original file has been preserved."
+        }
+    }
+
+    var current: Chat? { chats.first { $0.id == selected } }
+    var canWrite: Bool { !unreadable }
+
+    func select(_ id: UUID) throws { try update { $0.selected = id } }
+
+    func newChat() throws {
+        let chat = Chat(id: UUID(), title: "New chat", messages: [])
+        try update { $0.chats.insert(chat, at: 0); $0.selected = chat.id }
+    }
+
+    func append(_ message: Message) throws {
+        if current == nil { try newChat() }
+        try update { saved in
+            guard let index = saved.chats.firstIndex(where: { $0.id == saved.selected }) else { return }
+            saved.chats[index].messages.append(message)
+            if message.role == "user", saved.chats[index].title == "New chat" {
+                saved.chats[index].title = String(message.text.prefix(60))
+            }
+        }
+    }
+
+    func deleteChat(_ id: UUID) throws {
+        try update {
+            $0.chats.removeAll { $0.id == id }
+            if $0.selected == id { $0.selected = $0.chats.first?.id }
+        }
+    }
+
+    func deleteAll() throws {
+        // This is called only after the app's explicit Delete All Chats confirmation.
+        unreadable = false
+        try update { $0.chats = []; $0.selected = nil }
+    }
+
+    private func update(_ change: (inout Saved) -> Void) throws {
+        guard !unreadable else { throw CocoaError(.fileReadCorruptFile) }
+        var saved = Saved(chats: chats, selected: selected)
+        change(&saved)
+        do {
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder().encode(saved).write(to: file, options: .atomic)
+            chats = saved.chats; selected = saved.selected; error = nil
+        } catch {
+            self.error = "Couldn’t save this chat. Try again before making more changes."
+            throw error
+        }
     }
 }

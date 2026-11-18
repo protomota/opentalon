@@ -637,7 +637,7 @@ test('v1 database migration preserves records and v1 JSON/SQLite backups remain 
   const sqlite = await f.write('create_backup', {})
   const db = new DatabaseSync(sqlite.path)
   db.exec(
-    'DROP TRIGGER tasks_record_completion_on_insert; DROP TRIGGER tasks_record_completion_on_move; ALTER TABLE tasks DROP COLUMN completed_at; ALTER TABLE tasks DROP COLUMN archived_at; DROP INDEX tasks_task_key; DROP INDEX boards_project_key; ALTER TABLE tasks DROP COLUMN task_key; ALTER TABLE boards DROP COLUMN project_key; ALTER TABLE boards DROP COLUMN next_task_number; ALTER TABLE tasks DROP COLUMN due_date; ALTER TABLE tasks DROP COLUMN priority; ALTER TABLE tasks DROP COLUMN definition_of_done; DROP TABLE comment_images; DROP TABLE task_comments; DROP TABLE agent_jobs; DELETE FROM schema_migrations WHERE version>=2; PRAGMA user_version=1;'
+    'DROP TRIGGER tasks_record_completion_on_insert; DROP TRIGGER tasks_record_completion_on_move; ALTER TABLE tasks DROP COLUMN plan_markdown; ALTER TABLE tasks DROP COLUMN completed_at; ALTER TABLE tasks DROP COLUMN archived_at; DROP INDEX tasks_task_key; DROP INDEX boards_project_key; ALTER TABLE tasks DROP COLUMN task_key; ALTER TABLE boards DROP COLUMN project_key; ALTER TABLE boards DROP COLUMN next_task_number; ALTER TABLE tasks DROP COLUMN due_date; ALTER TABLE tasks DROP COLUMN priority; ALTER TABLE tasks DROP COLUMN definition_of_done; DROP TABLE comment_images; DROP TABLE task_comments; DROP TABLE agent_jobs; DELETE FROM schema_migrations WHERE version>=2; PRAGMA user_version=1;'
   )
   db.close()
   assert.equal((await f.store.inspect(sqlite.path)).summary.tasks, 1)

@@ -99,7 +99,7 @@ test('desktop fields and terminal commands preserve spaces, quotes and shell met
     ...server.args,
   ])
   assert.throws(() => terminalCommand(config, 'anything'))
-  assert.equal(tools.length, 24)
+  assert.ok(tools.some((tool) => tool.name === 'set_task_plan'))
   for (const name of [
     'agent_setup_fields',
     'save_claude_extension',
@@ -187,5 +187,5 @@ test('exported Claude extension contains no key and its bundled bridge connects 
     )
   })
   assert.equal(responses[0].result.serverInfo.name, 'OpenTalon')
-  assert.equal(responses[1].result.tools.length, 24)
+  assert.deepEqual(responses[1].result.tools.map((tool) => tool.name).sort(), tools.map((tool) => tool.name).sort())
 })

@@ -131,12 +131,9 @@ public struct PlanDocumentView: View {
             .simultaneousGesture(TapGesture().onEnded { focusedInput = nil })
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Picker("View", selection: $mode) {
-                        Text("Preview").tag(0)
-                        Text("Markdown").tag(1)
-                    }
-                    .pickerStyle(.segmented)
-                    .accessibilityIdentifier("planDisplayMode")
+                    PlanViewTabs(selection: $mode, colors: colors)
+                        .frame(maxWidth: 360)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     if let candidate {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Suggested revision").font(.headline)
@@ -324,5 +321,51 @@ private struct PlanWritingTools: ViewModifier {
     @ViewBuilder func body(content: Content) -> some View {
         if #available(iOS 18, macOS 15, *) { content.writingToolsBehavior(.complete) }
         else { content }
+    }
+}
+
+
+private struct PlanViewTabs: View {
+    @Binding var selection: Int
+    let colors: OpenTalonColors
+    @Namespace private var highlight
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: 4) {
+            tab("Preview", symbol: "doc.richtext", value: 0)
+            tab("Markdown", symbol: "chevron.left.forwardslash.chevron.right", value: 1)
+        }
+        .padding(4)
+        .background(colors.text.opacity(0.05), in: Capsule())
+        .overlay { Capsule().strokeBorder(colors.line.opacity(0.7), lineWidth: 1) }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: selection)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Plan view")
+        .accessibilityIdentifier("planDisplayMode")
+    }
+
+    private func tab(_ title: String, symbol: String, value: Int) -> some View {
+        let selected = selection == value
+        return Button { selection = value } label: {
+            Label(title, systemImage: symbol)
+                .font(.body.weight(selected ? .semibold : .medium))
+                .lineLimit(1)
+                .padding(.horizontal, 16)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .foregroundStyle(selected ? colors.actionAccent : colors.text)
+                .background {
+                    if selected {
+                        Capsule().fill(colors.card)
+                            .overlay { Capsule().strokeBorder(colors.actionAccent.opacity(0.5), lineWidth: 1) }
+                            .shadow(color: .black.opacity(0.08), radius: 3, y: 2)
+                            .matchedGeometryEffect(id: "planSelectedTab", in: highlight)
+                    }
+                }
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(value == 0 ? "planPreviewTab" : "planMarkdownTab")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

@@ -228,6 +228,7 @@ private struct NewTaskView: View {
     @State private var notes = ""
     @State private var definitionOfDone = ""
     @State private var includePlan = false
+    @State private var issueType: IssueType?
     @State private var detailsExpanded = false
     @State private var draftRequest: Task<Void, Never>?
     @State private var draftError: String?
@@ -310,6 +311,10 @@ private struct NewTaskView: View {
                               choices: Priority.allCases, label: \.label)
             }
 
+            BoardDropdown(selection: Binding(get: { issueType ?? .inferred(from: idea) }, set: { issueType = $0 }),
+                          title: "Issue type", symbol: (issueType ?? .inferred(from: idea)).symbol,
+                          choices: IssueType.allCases, label: \.rawValue)
+
             DisclosureGroup("Task details", isExpanded: $detailsExpanded) {
                 VStack(alignment: .leading, spacing: 10) {
                     detailField("Description and steps", text: $notes, height: 92)
@@ -390,7 +395,7 @@ private struct NewTaskView: View {
                     }
                 } else { plan = nil }
                 try await model.createItem(title: taskTitle, notes: notes, definitionOfDone: definitionOfDone,
-                                           project: board, status: status, priority: priority, planMarkdown: plan)
+                                           project: board, status: status, priority: priority, planMarkdown: plan, issueType: issueType ?? .inferred(from: idea))
                 if model.pendingSend == nil { model.sheet = nil }
             } catch let failure { error = failure.localizedDescription }
         }

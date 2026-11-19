@@ -196,6 +196,7 @@ function taskPrompt(task, job) {
 OpenTalon task ID: ${task.id}
 OpenTalon run ID: ${job.id}
 Title: ${task.title}
+Issue type: ${task.issueType || 'Issue'}
 Priority: ${task.priority}
 Definition of done:
 ${task.definitionOfDone || 'Complete the requested outcome, verify it with relevant checks, and post concrete proof on this task.'}

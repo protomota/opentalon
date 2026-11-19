@@ -11,7 +11,8 @@ const {
   restoreComments,
 } = require('./comments.cjs')
 
-const FORMAT = 8
+const taskHistory = require('./task-history.cjs')
+const FORMAT = 10
 const archiveAfterMs = 7 * 24 * 60 * 60 * 1000
 const taskKeyPattern = /^[A-Z]{3}-[0-9]{3,16}$/
 const defaultAgentSettings = { defaultAgent: 'codex', workingFolder: '' }
@@ -65,6 +66,7 @@ function taskView(row) {
     title: row.title,
     notes: row.notes,
     planMarkdown: row.plan_markdown || '',
+    issueType: row.issue_type || 'Issue',
     status: row.status,
     priority: row.priority || 'None',
     definitionOfDone: row.definition_of_done || '',
@@ -168,6 +170,8 @@ class Store {
       if (current < 6) this.migrateTaskKeys()
       if (current < 7) this.migrateArchive()
       if (current < 8) this.migratePlans()
+      if (current < 9) this.migrateIssueTypes()
+      if (current < 10) taskHistory.migrate(this)
       this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;')
       fs.chmodSync(this.file, 0o600)
     } catch (error) {
@@ -293,20 +297,32 @@ class Store {
     }
   }
 
+  migrateIssueTypes() {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      this.db.exec("ALTER TABLE tasks ADD COLUMN issue_type TEXT NOT NULL DEFAULT 'Issue' CHECK(issue_type IN ('Issue','Bug')); PRAGMA user_version=9;")
+      this.db.prepare('INSERT INTO schema_migrations VALUES (?,?)').run(9, new Date().toISOString())
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
   archiveCompletedTasks(now = new Date()) {
     const cutoff = new Date(now.getTime() - archiveAfterMs).toISOString()
     this.db.exec('BEGIN IMMEDIATE')
-    let revision
+    const revision = this.revision() + 1
     let count
     try {
       const result = this.db.prepare(`
-        UPDATE tasks SET archived_at=?
+        UPDATE tasks SET archived_at=?,revision=?
         WHERE status='Done' AND deleted_at IS NULL AND archived_at IS NULL
           AND julianday(completed_at)<=julianday(?)
-      `).run(now.toISOString(), cutoff)
+      `).run(now.toISOString(), revision, cutoff)
       count = result.changes
       if (count) {
-        revision = this.revision() + 1
+        taskHistory.recordRevision(this, revision, 'automatic_archive', 'OpenTalon')
         this.set('revision', revision)
       }
       this.db.exec('COMMIT')
@@ -560,6 +576,7 @@ class Store {
           this.setCommentDelivery(id, 'needs-review')
         if (patch.state === 'canceled')
           this.markPendingCommentsForReview(job.taskId)
+        taskHistory.recordRevision(this, revision, 'agent_update', 'Agent')
         this.set('revision', revision)
         this.db.exec('COMMIT')
         this.changed(revision)
@@ -637,7 +654,7 @@ class Store {
           recovered++
         }
       }
-      if (recovered) this.set('revision', revision)
+      if (recovered) { taskHistory.recordRevision(this, revision, 'dispatch_recovered', 'OpenTalon'); this.set('revision', revision) }
       this.db.exec('COMMIT')
     } catch (error) {
       this.db.exec('ROLLBACK')
@@ -745,7 +762,7 @@ class Store {
   saveTask(task, revision) {
     this.db
       .prepare(
-        'UPDATE tasks SET board_id=?,title=?,notes=?,status=?,position=?,updated_at=?,deleted_at=?,revision=?,priority=?,definition_of_done=?,due_date=? WHERE id=?'
+        'UPDATE tasks SET board_id=?,title=?,notes=?,status=?,position=?,updated_at=?,deleted_at=?,revision=?,priority=?,definition_of_done=?,due_date=?,issue_type=? WHERE id=?'
       )
       .run(
         task.boardId,
@@ -759,6 +776,7 @@ class Store {
         task.priority,
         task.definitionOfDone,
         task.dueDate,
+        task.issueType || 'Issue',
         task.id
       )
     return this.task(task.id)
@@ -831,6 +849,7 @@ class Store {
       status: a.status || null,
       query: (a.query || '').trim().toLowerCase(),
       priority: a.priority || null,
+      issueType: a.issueType || null,
       sort: a.sort || 'manual',
     }
     const fingerprint = argumentHash(filter)
@@ -867,6 +886,10 @@ class Store {
     if (filter.priority) {
       where.push('priority=?')
       params.push(filter.priority)
+    }
+    if (filter.issueType) {
+      where.push('issue_type=?')
+      params.push(filter.issueType)
     }
     // JS Unicode lowercasing keeps UI and MCP search identical, beyond SQLite's ASCII lower().
     const rows = this.db
@@ -944,6 +967,7 @@ class Store {
       }
     if (name === 'list_boards') return { boards: this.boards(), revision: this.revision() }
     if (name === 'get_task') return { task: this.task(a.id) }
+    if (name === 'get_task_history') return taskHistory.page(this, a.id, a.beforeVersion, a.limit)
     if (name === 'list_tasks' || name === 'list_trash') return this.list(a, name === 'list_trash')
     if (name === 'get_preferences') return this.preferences()
     if (name === 'list_task_comments') {
@@ -994,7 +1018,8 @@ class Store {
     try {
       const revision = this.revision() + 1
       let result
-      if (name === 'reorder_tasks') {
+      if (name === 'restore_task_revision') result = taskHistory.restore(this, a, revision)
+      else if (name === 'reorder_tasks') {
         this.expect({ revision: this.revision() }, a.expectedRevision)
         this.board(a.boardId)
         const column = this.liveColumn(a.boardId, a.status)
@@ -1213,6 +1238,7 @@ class Store {
             a.dueDate || null
           )
         this.assignTaskKey(id, boardId)
+        if (a.issueType !== undefined) this.db.prepare('UPDATE tasks SET issue_type=? WHERE id=?').run(a.issueType, id)
         if (a.planMarkdown !== undefined)
           this.db.prepare('UPDATE tasks SET plan_markdown=? WHERE id=?').run(a.planMarkdown, id)
         result = { task: this.task(id) }
@@ -1232,6 +1258,7 @@ class Store {
           if (a.notes !== undefined) task.notes = a.notes
           if (a.planMarkdown !== undefined)
             this.db.prepare('UPDATE tasks SET plan_markdown=? WHERE id=?').run(a.planMarkdown, task.id)
+          if (a.issueType !== undefined) task.issueType = a.issueType
           if (a.priority !== undefined) task.priority = a.priority
           if (a.definitionOfDone !== undefined) task.definitionOfDone = a.definitionOfDone
           if (a.dueDate !== undefined) task.dueDate = a.dueDate
@@ -1359,7 +1386,7 @@ class Store {
               .run(board.id, board.name, board.position, board.created_at, revision, board.project_key, board.next_task_number)
           for (const task of restore.tasks)
             this.db
-              .prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+              .prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
               .run(
                 task.id,
                 task.board_id,
@@ -1377,9 +1404,11 @@ class Store {
                 task.task_key,
                 task.completed_at,
                 task.archived_at,
-                task.plan_markdown
+                task.plan_markdown,
+                task.issue_type
               )
           this.backfillTaskKeys()
+          for (const row of restore.taskHistory) this.db.prepare('INSERT INTO task_history VALUES (?,?,?,?,?,?,?,?)').run(row.id,row.task_id,row.version,row.saved_at,row.action,row.origin,row.changes_json,row.state_json)
           restoreComments(this, restore.comments, restore.commentImages)
           this.set('theme', restore.preferences.theme)
           this.set('selectedBoard', restore.preferences.selectedBoard)
@@ -1414,6 +1443,7 @@ class Store {
           result = { permanentlyDeleted: preview.taskIds.length }
         }
       } else throw new AppError('UNKNOWN_ACTION', 'Unavailable action.')
+      taskHistory.recordRevision(this, revision, name, a.requestKey.startsWith('phone:') ? 'Mobile app' : a.requestKey.startsWith('mac:') ? 'Mac app' : 'Connected agent')
       this.set('revision', revision)
       result.revision = revision
       this.db
@@ -1455,6 +1485,7 @@ class Store {
         ...exportComments(this),
         boards: this.db.prepare('SELECT * FROM boards ORDER BY position,id').all(),
         tasks: this.db.prepare('SELECT * FROM tasks ORDER BY position,id').all(),
+        taskHistory: this.db.prepare('SELECT * FROM task_history ORDER BY task_id,version').all(),
       }
       const stageFolder = fs.mkdtempSync(path.join(this.folder, '.backup-'))
       try {
@@ -1545,6 +1576,7 @@ class Store {
         fs.closeSync(descriptor)
       }
       let boards, tasks, settings, format
+      let history = []
       let icons = {}
       let allTasksOrder = []
       let commentData = { comments: [], commentImages: [] }
@@ -1560,7 +1592,7 @@ class Store {
             'This backup needs a newer OpenTalon. Current data is unchanged.'
           )
         if (
-          ![1, 2, 3, 4, 5, 6, 7, FORMAT].includes(payload.formatVersion) ||
+          ![1, 2, 3, 4, 5, 6, 7, 8, 9, FORMAT].includes(payload.formatVersion) ||
           !Array.isArray(payload.boards) ||
           !Array.isArray(payload.tasks) ||
           !payload.preferences ||
@@ -1573,6 +1605,7 @@ class Store {
           )
         boards = payload.boards
         tasks = payload.tasks
+        history = payload.formatVersion >= 10 ? payload.taskHistory : []
         settings = payload.preferences
         icons = payload.boardIcons
         allTasksOrder = payload.allTasksOrder
@@ -1590,7 +1623,7 @@ class Store {
             'This backup needs a newer OpenTalon. Current data is unchanged.'
           )
         if (
-          ![1, 2, 3, 4, 5, 6, 7, FORMAT].includes(format) ||
+          ![1, 2, 3, 4, 5, 6, 7, 8, 9, FORMAT].includes(format) ||
           db.prepare('PRAGMA application_id').get().application_id !== APPLICATION_ID
         )
           throw new AppError('INVALID_BACKUP', 'This is not a supported OpenTalon backup.')
@@ -1604,6 +1637,7 @@ class Store {
           throw new AppError('INVALID_BACKUP', 'This backup failed SQLite integrity validation.')
         boards = db.prepare('SELECT * FROM boards ORDER BY position,id').all()
         tasks = db.prepare('SELECT * FROM tasks ORDER BY position,id').all()
+        history = format >= 10 ? db.prepare('SELECT * FROM task_history ORDER BY task_id,version').all() : []
         settings = Object.fromEntries(
           db
             .prepare('SELECT key,value FROM settings')
@@ -1638,6 +1672,7 @@ class Store {
         completed_at: format < 7 ? (task?.status === 'Done' ? task.updated_at : null) : task?.completed_at,
         archived_at: format < 7 ? null : task?.archived_at,
         plan_markdown: format < 8 ? '' : task?.plan_markdown,
+        issue_type: format < 9 ? 'Issue' : task?.issue_type,
       }))
       if (ids.size !== boards.length || new Set(tasks.map((task) => task.id)).size !== tasks.length)
         throw new AppError('INVALID_BACKUP', 'This backup contains duplicate record IDs.')
@@ -1676,6 +1711,7 @@ class Store {
           typeof task.plan_markdown !== 'string' || task.plan_markdown.length > 100000 ||
           !task.plan_markdown.isWellFormed() || task.plan_markdown.includes('\0') ||
           !statuses.includes(task.status) ||
+          !['Issue', 'Bug'].includes(task.issue_type) ||
           !priorities.includes(task.priority) ||
           typeof task.definition_of_done !== 'string' ||
           task.definition_of_done.length > 10000 ||
@@ -1738,12 +1774,14 @@ class Store {
         )
           throw new AppError('INVALID_BACKUP', 'This backup contains invalid agent history.')
       }
+      taskHistory.validateRows(history, tasks)
       validateComments(commentData.comments, commentData.commentImages, tasks)
       const taskIds = new Set(tasks.map((task) => task.id))
       return {
         boards,
         tasks,
         ...commentData,
+        taskHistory: history,
         agentSettings,
         agentRuns: agentRuns.map(
           ({
@@ -1944,6 +1982,7 @@ class Store {
       )
       this.set('preferencesRevision', 2)
       this.set('revision', 2)
+      taskHistory.recordRevision(this, 2, 'imported', 'OpenTalon')
       this.set('prototypeImported', true)
       this.db.exec('COMMIT')
       this.changed(2)

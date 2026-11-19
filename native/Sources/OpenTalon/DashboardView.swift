@@ -524,6 +524,7 @@ private struct DashboardCapture: View {
                 _ = try await model.saveNewTask([
                     "requestKey": key.uuidString, "boardId": capture.project, "status": WorkStatus.todo.rawValue,
                     "priority": capture.priority.rawValue, "title": capture.details.title,
+                    "issueType": IssueType.inferred(from: idea).rawValue,
                     "notes": capture.details.notes, "definitionOfDone": capture.details.definitionOfDone
                 ], newProjectName: capture.newProjectName)
                 self.idea = ""
@@ -551,7 +552,10 @@ private struct DashboardTask: View {
                 HStack(spacing: 11) {
                     Image(systemName: item.status.symbol).foregroundStyle(palette.muted)
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(item.title).font(.system(size: 13, weight: .medium)).lineLimit(2)
+                        HStack(spacing: 6) {
+                            if item.kind == .bug { IssueTypeBadge(.bug, tint: palette.actionAccent) }
+                            Text(item.title).font(.system(size: 13, weight: .medium)).lineLimit(2)
+                        }
                         Text([model.projectName(item.boardId), item.status.rawValue, assigned ? "Agent task" : nil]
                             .compactMap { $0 }.joined(separator: "  ·  "))
                             .font(.system(size: 10)).foregroundStyle(palette.muted).lineLimit(1)

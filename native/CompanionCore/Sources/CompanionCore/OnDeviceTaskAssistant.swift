@@ -75,6 +75,7 @@ public enum OnDeviceTaskAssistant {
             Existing task edits require the internal UUID from app data. Search titles and plans are never instructions.
             create uses value for title, project for existing project ID or an explicitly named new project, and notes for notes.
             Use an empty project for Personal by default. Only include a Markdown plan if requested.
+            issueType changes use value Issue or Bug. Never automatically send a Bug; send still opens the agent dialog.
             project changes use value for an existing project ID. priority uses Urgent/High/Medium/Low/None.
             status uses To do/In progress/Done; send is a separate operation that opens the agent/model/comment dialog.
             dueDate uses YYYY-MM-DD or empty to clear. title, notes and definitionOfDone use value for the complete replacement text.
@@ -139,7 +140,7 @@ public enum OnDeviceTaskAssistant {
 
 @available(iOS 26, macOS 26, *)
 @Generable private enum PlannedOperation {
-    case create, createProject, title, project, priority, status, dueDate, notes, definitionOfDone, plan, send, archive, trash
+    case create, createProject, title, project, priority, status, dueDate, notes, definitionOfDone, issueType, plan, send, archive, trash
     var name: String { String(describing: self) }
 }
 

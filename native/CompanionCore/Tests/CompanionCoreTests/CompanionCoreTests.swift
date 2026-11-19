@@ -43,7 +43,7 @@ import Testing
     let capture = PhoneRequest(workspaceID: workspace, action: .create(projectID: "personal", title: "Task", notes: "Summary", priority: .medium,
                                                                        sendToAgent: false, planMarkdown: "# Steps"))
     let saved = try JSONDecoder().decode(PhoneRequest.self, from: JSONEncoder().encode(capture))
-    guard case .create(_, _, _, _, _, _, _, _, _, _, let plan) = saved.action else { Issue.record("Wrong create action"); return }
+    guard case .create(_, _, _, _, _, _, _, _, _, _, let plan, _) = saved.action else { Issue.record("Wrong create action"); return }
     #expect(plan == "# Steps")
 }
 
@@ -116,7 +116,7 @@ import Testing
     ))
     let data = try JSONEncoder().encode(request)
     let restored = try JSONDecoder().decode(PhoneRequest.self, from: data)
-    guard case .create(_, _, _, _, _, let criteria, _, _, _, _, _) = restored.action else {
+    guard case .create(_, _, _, _, _, let criteria, _, _, _, _, _, _) = restored.action else {
         Issue.record("The queued ticket did not decode as a creation request.")
         return
     }
@@ -133,7 +133,7 @@ import Testing
     }
     """
     let previous = try JSONDecoder().decode(PhoneRequest.self, from: Data(legacy.utf8))
-    guard case .create(_, let title, _, _, _, let legacyCriteria, _, _, let legacyComment, let newProject, _) = previous.action else {
+    guard case .create(_, let title, _, _, _, let legacyCriteria, _, _, let legacyComment, let newProject, _, _) = previous.action else {
         Issue.record("The older creation request did not decode.")
         return
     }
@@ -312,3 +312,29 @@ import Testing
     #expect(current.supportsTaskReordering)
 }
 #endif
+
+@Test func bugInferenceRequiresAnExplicitBugIntent() throws {
+    #expect(IssueType.inferred(from: "Create a critical bug for the frozen task menu") == .bug)
+    #expect(IssueType.inferred(from: "Bug: due date cannot change") == .bug)
+    #expect(IssueType.inferred(from: "Buy bug spray") == .issue)
+    #expect(IssueType.inferred(from: "Write a release checklist") == .issue)
+}
+
+@Test func revisionHistoryRoundTripsAndNeverReplaysDispatch() throws {
+    let data = Data(##"{"taskID":"task","revision":12,"entries":[{"id":"entry","version":3,"savedAt":"2026-11-19T12:00:00Z","action":"update_task","origin":"Mobile app","changedFields":["notes"],"state":{"title":"A bug","notes":"Original notes","definitionOfDone":"Test it","planMarkdown":"# Plan","issueType":"Bug","projectID":"project","projectName":"Studio","taskKey":"STU-001","status":"Sent to agent","priority":"High","dueDate":null,"position":0,"archived":false,"trashed":false}}],"nextBefore":3}"##.utf8)
+    let page = try JSONDecoder().decode(TaskHistoryPage.self, from: data)
+    #expect(page.entries[0].state.restoredStatus == .todo)
+    #expect(page.entries[0].state.issueType == .bug)
+    #expect(page.entries[0].summary == "Notes")
+    #expect(try JSONDecoder().decode(TaskHistoryPage.self, from: JSONEncoder().encode(page)) == page)
+    let request = PhoneRequest(workspaceID: UUID(), action: .restoreRevision(taskID: "task", historyID: "entry", revision: 12))
+    #expect(request.changesTask)
+    #expect(request.taskID == "task")
+    let load = PhoneRequest(workspaceID: request.workspaceID, action: .loadHistory(taskID: "task", beforeVersion: 3))
+    #expect(!load.changesTask)
+    let receipt = PhoneReceipt(requestID: load.id, outcome: .applied, revision: 12, history: page)
+    #expect(try JSONDecoder().decode(PhoneReceipt.self, from: JSONEncoder().encode(receipt)) == receipt)
+    let ended = try JSONDecoder().decode(TaskHistoryPage.self, from: Data(##"{"taskID":"task","revision":12,"entries":[],"nextBefore":null}"##.utf8))
+    #expect(page.merging(ended).nextBefore == nil)
+    #expect(page.merging(page).entries.count == 1)
+}

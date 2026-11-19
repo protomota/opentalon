@@ -1,3 +1,4 @@
+const taskHistory = require('./task-history.cjs')
 // Private JSON-line transport between the Swift application and the shared local service.
 // The network-facing connector retains its own allowlist and authentication.
 const fs = require('node:fs')
@@ -29,7 +30,7 @@ const projects = new Map()
 let chatController
 const chatTools = tools.filter(({ name }) => [
   'list_boards', 'create_board', 'rename_board', 'set_board_icon',
-  'list_tasks', 'get_task', 'create_task', 'update_task', 'set_task_plan', 'move_task',
+  'list_tasks', 'get_task', 'create_task', 'update_task', 'set_task_plan', 'get_task_history', 'restore_task_revision', 'move_task',
   'trash_task', 'list_trash', 'restore_task', 'list_task_comments', 'add_task_comment',
 ].includes(name))
 
@@ -195,7 +196,7 @@ async function privateAction(name, input) {
         })
       }
       return {
-        workspace, commentsByTask, ...agentOptions(),
+        workspace, commentsByTask, historyByTask: Object.fromEntries(workspace.tasks.filter(task => !task.deleted).map(task => [task.id, taskHistory.page(store, task.id, undefined, 1)])), ...agentOptions(),
       }
     }
     case 'native_test_connection': return testConnection()

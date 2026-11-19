@@ -45,6 +45,7 @@ final class PhoneWorkspace {
         let definitionOfDone: String?
         let priority: PhoneTask.Priority
         let planMarkdown: String?
+        let issueType: IssueType?
         var result: Result = .queued
         var dismissed = false
     }
@@ -68,6 +69,7 @@ final class PhoneWorkspace {
         var commentDrafts: [String: String]?
         var unsavedNotes: [String: UnsavedNotes]?
         var planDrafts: [String: String]?
+        var historyPages: [String: TaskHistoryPage]?
         var capturedTask: CapturedTask?
     }
 
@@ -156,12 +158,14 @@ final class PhoneWorkspace {
         guard snapshot?.workspaceID == workspaceID, snapshot?.supportsFieldEditing == true else {
             throw CompanionSyncError.missingWorkspace
         }
+        if edit.field == .issueType, snapshot?.supportsTaskTypes != true { throw CompanionSyncError.missingWorkspace }
         if snapshot?.supportsTaskOverrides == true {
             let current = snapshot?.tasks.first(where: { $0.id == task.id }) ?? task
             let expected: String? = switch edit.field {
             case .project: displayedProject(for: current)
             case .status: displayedStatus(for: current).rawValue
             case .priority: displayedPriority(for: current).rawValue
+            case .issueType: displayedIssueType(for: current).rawValue
             case .dueDate: displayedDueDate(for: current)
             case .title: displayedText(for: current, field: .title)
             case .notes: displayedText(for: current, field: .notes)
@@ -238,9 +242,9 @@ final class PhoneWorkspace {
     private func enqueue(_ request: PhoneRequest, in state: LocalState) throws {
         var updated = state
         updated.pending.append(request)
-        if case .create(let project, let title, let notes, let priority, _, let definition, _, _, _, let newProject, let plan) = request.action {
+        if case .create(let project, let title, let notes, let priority, _, let definition, _, _, _, let newProject, let plan, let type) = request.action {
             updated.capturedTask = CapturedTask(id: request.id, title: title, project: newProject ?? projectName(project),
-                                               notes: notes, definitionOfDone: definition, priority: priority, planMarkdown: plan)
+                                               notes: notes, definitionOfDone: definition, priority: priority, planMarkdown: plan, issueType: type)
         }
         try save(updated)
         Task { await sync() }
@@ -284,6 +288,7 @@ final class PhoneWorkspace {
                 if updated.snapshot?.workspaceID != incoming.workspaceID {
                     updated.commentDrafts = nil
                     updated.unsavedNotes = nil
+                    updated.historyPages = nil
                     updated.capturedTask = nil
                 }
                 if updated.snapshot == nil, let legacy = load(directory.appending(path: "workspace.json")),
@@ -310,6 +315,12 @@ final class PhoneWorkspace {
                 guard let receipt else { continue }
                 var updated = state
                 if receipt.isSettled(at: snapshot.revision) {
+                    if let page = receipt.history, receipt.outcome == .applied {
+                        updated.historyPages = updated.historyPages ?? [:]
+                        if let existing = updated.historyPages?[page.taskID] {
+                            updated.historyPages?[page.taskID] = existing.merging(page)
+                        } else { updated.historyPages?[page.taskID] = page }
+                    }
                     updated.pending.removeAll { $0.id == receipt.requestID }
                     updated.waiting.removeValue(forKey: receipt.requestID)
                     if updated.capturedTask?.id == receipt.requestID {
@@ -418,9 +429,16 @@ final class PhoneWorkspace {
         }
     }
 
+    func displayedIssueType(for task: PhoneTask) -> IssueType {
+        if case .issueType(let type) = pendingField(for: task.id, field: .issueType) { return type }
+        return task.kind
+    }
+
     func displayedPlan(for task: PhoneTask) -> String {
         for request in taskChanges(for: task.id).reversed() {
             if case .savePlan(_, _, let markdown) = request.action { return markdown }
+            if case .restoreRevision(_, let id, _) = request.action,
+               let entry = historyPage(for: task.id)?.entries.first(where: { $0.id == id }) { return entry.state.planMarkdown }
         }
         return task.planMarkdown ?? ""
     }
@@ -458,10 +476,38 @@ final class PhoneWorkspace {
             switch request.action {
             case .editField(_, _, let edit), .setField(_, _, let edit):
                 if edit.field == field { return edit }
+            case .restoreRevision(_, let id, _):
+                if let entry = historyPage(for: taskID)?.entries.first(where: { $0.id == id }) { return entry.state.edit(for: field) }
             default: break
             }
         }
         return nil
+    }
+
+    func historyPage(for taskID: String) -> TaskHistoryPage? {
+        let base = snapshot?.historyByTask?[taskID]
+        guard let cached = state.historyPages?[taskID] else { return base }
+        if let newest = base?.entries.first?.version, let cachedNewest = cached.entries.first?.version,
+           newest > cachedNewest + 1 { return base }
+        return base?.merging(cached) ?? cached
+    }
+
+    func isLoadingHistory(for taskID: String) -> Bool {
+        pending.contains { if case .loadHistory(let id, _) = $0.action { return id == taskID }; return false }
+    }
+
+    func loadHistory(for taskID: String, before: Int?) throws {
+        guard let snapshot, snapshot.historyByTask != nil else { throw CompanionSyncError.missingWorkspace }
+        guard !pending.contains(where: { request in
+            if case .loadHistory(let id, let cursor) = request.action { return id == taskID && cursor == before }
+            return false
+        }) else { return }
+        try queue(.loadHistory(taskID: taskID, beforeVersion: before))
+    }
+
+    func restoreHistory(_ entry: TaskRevision, for task: PhoneTask) throws {
+        guard let snapshot, snapshot.historyByTask != nil else { throw CompanionSyncError.missingWorkspace }
+        try queue(.restoreRevision(taskID: task.id, historyID: entry.id, revision: task.revision))
     }
 
     func pendingTaskChange(for taskID: String) -> PhoneRequest? {
@@ -477,6 +523,8 @@ final class PhoneWorkspace {
     func displayedStatus(for task: PhoneTask) -> PhoneTask.Status {
         for request in taskChanges(for: task.id).reversed() {
             switch request.action {
+            case .restoreRevision(_, let id, _):
+                if let entry = historyPage(for: task.id)?.entries.first(where: { $0.id == id }) { return entry.state.restoredStatus }
             case .organizeTask(_, .active): return .todo
             case .complete, .forceComplete: return .done
             case .send: return .sent
@@ -504,6 +552,7 @@ final class PhoneWorkspace {
 
     func isArchived(_ task: PhoneTask) -> Bool {
         for request in taskChanges(for: task.id).reversed() {
+            if case .restoreRevision = request.action { return false }
             if case .organizeTask(_, let destination) = request.action {
                 return destination == .archive || (destination == .trash && task.archivedAt != nil)
             }
@@ -581,8 +630,10 @@ final class PhoneWorkspace {
 
     func title(for request: PhoneRequest) -> String {
         switch request.action {
+        case .loadHistory: "Load task history"
+        case .restoreRevision: "Restore task revision"
         case .createProject(let name): name
-        case .create(_, let title, _, _, _, _, _, _, _, _, _): title
+        case .create(_, let title, _, _, _, _, _, _, _, _, _, _): title
         case .emptyTrash: "Trash"
         case .manageArchive: "Archive"
         case .restoreTrashed(let id, _): snapshot?.trashedTasks?.first(where: { $0.id == id })?.title ?? "Task"

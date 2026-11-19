@@ -105,6 +105,20 @@ Run `node --test native/runtime/*.test.cjs native/integration.test.cjs` with Nod
 
 See the guide for [backing up your board](docs/BACKUPS.md). For help with the apps, visit [OpenTalon Support](https://opentalon.ai/help).
 
+## Bugs and revision history
+
+Tasks can be **Issue** or **Bug**. Bug labels appear on cards and details, and the type is included in the agent handoff. Creating a Bug does not send it to an agent automatically.
+
+**View revision history** in task details shows saved changes to fields, project, status, order and the Markdown plan. Preview a revision before restoring it. A restore creates a new entry and retains newer history and current comments. It stops active agent work and reopens archived tasks; a saved Sent to agent status restores as To do. Restore a trashed task before restoring its fields. Existing tasks start with a migration baseline; edits made before this update cannot be reconstructed.
+
+History is stored in the Mac's SQLite database and both full backup formats. Mobile syncs the newest revision and can request older pages from the Mac. Cached revisions remain readable offline; older pages and acknowledged restores require the Mac to be online. History is removed only when its task is permanently deleted or the workspace is replaced from a backup.
+
+
+<table>
+  <tr><th>A clearly labeled Bug</th><th>Saved task revisions</th></tr>
+  <tr><td><img src="docs/screenshots/mobile-bug-task.webp" alt="Bug task details and quick actions on iPhone" width="340"></td><td><img src="docs/screenshots/mobile-task-history.webp" alt="Task revision history synced from Mac on iPhone" width="340"></td></tr>
+</table>
+
 ## License
 
 OpenTalon's original source is available under the [OpenTalon Source-Available License 1.0](LICENSE). It allows inspection, modification, internal use, and noncommercial redistribution subject to the license. Commercial distribution and monetized hosting require written permission from Protomota, LLC. Third-party components keep their own licenses.

@@ -79,6 +79,8 @@ public struct PhoneTask: Codable, Identifiable, Sendable {
     public let title: String
     public let notes: String
     public let planMarkdown: String?
+    public let issueType: IssueType?
+    public var kind: IssueType { issueType ?? .issue }
     public let definitionOfDone: String
     public let status: Status
     public let priority: Priority
@@ -96,12 +98,13 @@ public struct PhoneTask: Codable, Identifiable, Sendable {
                 status: Status, priority: Priority, dueDate: String?, revision: Int, assigned: Bool,
                 taskKey: String? = nil, createdAt: Date? = nil, archivedAt: Date? = nil,
                 agentPickup: PhoneAgentPickup? = nil, agentDispatchError: String? = nil,
-                position: Int? = nil, planMarkdown: String? = nil) {
+                position: Int? = nil, planMarkdown: String? = nil, issueType: IssueType? = nil) {
         self.id = id
         self.projectID = projectID
         self.title = title
         self.notes = notes
         self.planMarkdown = planMarkdown
+        self.issueType = issueType
         self.definitionOfDone = definitionOfDone
         self.status = status
         self.priority = priority
@@ -177,6 +180,8 @@ public struct PhoneSnapshot: Codable, Sendable {
     private let taskReordering: Bool?
     private let taskOrganization: Bool?
     private let taskPlans: Bool?
+    private let taskTypes: Bool?
+    public let historyByTask: [String: TaskHistoryPage]?
 
     public init(workspaceID: UUID, revision: Int, updatedAt: Date = .now,
                 projects: [PhoneProject], tasks: [PhoneTask], defaultAgent: PhoneAgent? = nil,
@@ -187,7 +192,7 @@ public struct PhoneSnapshot: Codable, Sendable {
                 captureProjectID: String? = nil, macName: String? = nil,
                 supportsTaskOverrides: Bool = false, supportsBulkArchive: Bool = false,
                 supportsTaskReordering: Bool = false, supportsTaskOrganization: Bool = false,
-                supportsTaskPlans: Bool = false) {
+                supportsTaskPlans: Bool = false, supportsTaskTypes: Bool = false, historyByTask: [String: TaskHistoryPage]? = nil) {
         version = 1
         self.workspaceID = workspaceID
         self.revision = revision
@@ -210,6 +215,8 @@ public struct PhoneSnapshot: Codable, Sendable {
         taskReordering = supportsTaskReordering ? true : nil
         taskOrganization = supportsTaskOrganization ? true : nil
         taskPlans = supportsTaskPlans ? true : nil
+        taskTypes = supportsTaskTypes ? true : nil
+        self.historyByTask = historyByTask
     }
 
     public var supportsNoteEditing: Bool { noteEditing == true }
@@ -221,8 +228,11 @@ public struct PhoneSnapshot: Codable, Sendable {
     public var supportsTaskReordering: Bool { taskReordering == true }
     public var supportsTaskOrganization: Bool { taskOrganization == true }
     public var supportsTaskPlans: Bool { taskPlans == true }
+    public var supportsTaskTypes: Bool { taskTypes == true }
 
     var projectionVersion: Int {
+        if historyByTask != nil { return 17 }
+        if supportsTaskTypes { return 16 }
         if supportsTaskPlans { return 15 }
         if supportsTaskOrganization { return 14 }
         if supportsTaskReordering { return 13 }
@@ -252,18 +262,20 @@ public enum PhoneTaskFieldEdit: Codable, Sendable {
     case project(String)
     case status(PhoneTask.Status, agent: PhoneAgent? = nil, model: String? = nil, dispatchComment: String? = nil)
     case priority(PhoneTask.Priority)
+    case issueType(IssueType)
     case dueDate(String?)
     case title(String)
     case notes(String)
     case definitionOfDone(String)
 
-    public enum Field: String, Sendable { case project, status, priority, dueDate, title, notes, definitionOfDone }
+    public enum Field: String, Sendable { case project, status, priority, dueDate, title, notes, definitionOfDone, issueType }
 
     public var field: Field {
         switch self {
         case .project: .project
         case .status: .status
         case .priority: .priority
+        case .issueType: .issueType
         case .dueDate: .dueDate
         case .title: .title
         case .notes: .notes
@@ -276,6 +288,7 @@ public enum PhoneTaskFieldEdit: Codable, Sendable {
         case .project(let id): id
         case .status(let status, _, _, _): status.rawValue
         case .priority(let priority): priority.rawValue
+        case .issueType(let type): type.rawValue
         case .dueDate(let date): date
         case .title(let text), .notes(let text), .definitionOfDone(let text): text
         }
@@ -287,6 +300,7 @@ public enum PhoneTaskFieldEdit: Codable, Sendable {
         case .status(.sent, let agent, _, _): agent.map { "Send to \($0.title)" } ?? "Send to agent"
         case .status: "Change status"
         case .priority: "Change priority"
+        case .issueType: "Change issue type"
         case .dueDate: "Change due date"
         case .title: "Change title"
         case .notes: "Edit notes"
@@ -299,12 +313,14 @@ public struct PhoneRequest: Codable, Identifiable, Sendable {
     public enum TaskDestination: String, Codable, Sendable { case archive, trash, active }
 
     public enum Action: Codable, Sendable {
+        case loadHistory(taskID: String, beforeVersion: Int?)
+        case restoreRevision(taskID: String, historyID: String, revision: Int)
         case createProject(name: String)
         case savePlan(taskID: String, expectedMarkdown: String, markdown: String)
         case organizeTask(taskID: String, destination: TaskDestination)
         case create(projectID: String, title: String, notes: String, priority: PhoneTask.Priority,
                     sendToAgent: Bool, definitionOfDone: String? = nil, agent: PhoneAgent? = nil, model: String? = nil,
-                    dispatchComment: String? = nil, newProjectName: String? = nil, planMarkdown: String? = nil)
+                    dispatchComment: String? = nil, newProjectName: String? = nil, planMarkdown: String? = nil, issueType: IssueType? = nil)
         case send(taskID: String, revision: Int, agent: PhoneAgent? = nil)
         case complete(taskID: String, revision: Int)
         case comment(taskID: String, text: String)
@@ -337,15 +353,15 @@ public struct PhoneRequest: Codable, Identifiable, Sendable {
         case .send(let id, _, _), .complete(let id, _), .comment(let id, _),
              .editNotes(let id, _, _), .editField(let id, _, _), .setField(let id, _, _), .forceComplete(let id),
              .removeArchived(let id, _, _), .restoreTrashed(let id, _), .reorderTask(let id, _, _, _, _),
-             .organizeTask(let id, _), .savePlan(let id, _, _): id
+             .organizeTask(let id, _), .savePlan(let id, _, _), .loadHistory(let id, _), .restoreRevision(let id, _, _): id
         }
     }
 
     public var changesTask: Bool {
         switch action {
         case .send, .complete, .editNotes, .editField, .setField, .forceComplete, .removeArchived, .restoreTrashed,
-             .organizeTask, .savePlan: true
-        case .create, .createProject, .comment, .emptyTrash, .manageArchive, .reorderTask: false
+             .organizeTask, .savePlan, .restoreRevision: true
+        case .create, .createProject, .comment, .emptyTrash, .manageArchive, .reorderTask, .loadHistory: false
         }
     }
 }
@@ -357,14 +373,16 @@ public struct PhoneReceipt: Codable, Equatable, Sendable {
     public let revision: Int?
     public let message: String?
     public let createdTaskID: String?
+    public let history: TaskHistoryPage?
 
     public init(requestID: UUID, outcome: Outcome, revision: Int? = nil, message: String? = nil,
-                createdTaskID: String? = nil) {
+                createdTaskID: String? = nil, history: TaskHistoryPage? = nil) {
         self.requestID = requestID
         self.outcome = outcome
         self.revision = revision
         self.message = message
         self.createdTaskID = createdTaskID
+        self.history = history
     }
 
     public func isSettled(at snapshotRevision: Int) -> Bool {

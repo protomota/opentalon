@@ -17,6 +17,7 @@ final class PhoneCompanion {
         let availableAgents: [PhoneAgent]
         let agentModels: [AgentModelChoice]
         let commentsByTask: [String: [PhoneComment]]
+        let historyByTask: [String: TaskHistoryPage]
     }
 
     private struct MutationRevision: Decodable {
@@ -127,7 +128,7 @@ final class PhoneCompanion {
                 taskKey: item.taskKey, createdAt: item.creationDate,
                 archivedAt: item.archivedAt.flatMap(TaskCreationOrder.date(from:)),
                 agentPickup: workspace.agentAssignments[item.id].flatMap { pickups[$0] },
-                agentDispatchError: error, position: item.position, planMarkdown: item.planMarkdown
+                agentDispatchError: error, position: item.position, planMarkdown: item.planMarkdown, issueType: item.kind
             )
         }
         return PhoneSnapshot(workspaceID: identity.workspaceID, revision: workspace.revision,
@@ -142,13 +143,27 @@ final class PhoneCompanion {
                                                        title: $0.title, revision: $0.revision) },
                              captureProjectID: workspace.selectedBoard, macName: Host.current().localizedName ?? "Mac",
                              supportsTaskOverrides: true, supportsBulkArchive: true, supportsTaskReordering: true,
-                             supportsTaskOrganization: true, supportsTaskPlans: true)
+                             supportsTaskOrganization: true, supportsTaskPlans: true, supportsTaskTypes: true, historyByTask: snapshot.historyByTask)
     }
 
     private func apply(_ request: PhoneRequest, service: Service) async throws -> PhoneReceipt {
         let action: String
         var input: [String: Any] = ["requestKey": "phone:" + request.id.uuidString]
         switch request.action {
+        case .loadHistory(let id, let before):
+            var fields: [String: Any] = ["id": id, "limit": 20]
+            fields["beforeVersion"] = before
+            do {
+                let page: TaskHistoryPage = try await service.call("get_task_history", fields)
+                return PhoneReceipt(requestID: request.id, outcome: .applied, revision: page.revision, history: page)
+            } catch let failure as ServiceFailure where failure.code == "NOT_FOUND" {
+                return PhoneReceipt(requestID: request.id, outcome: .rejected, message: failure.message)
+            }
+        case .restoreRevision(let id, let historyID, let revision):
+            action = "restore_task_revision"
+            input["id"] = id
+            input["historyID"] = historyID
+            input["expectedRevision"] = revision
         case .createProject(let name):
             action = "create_board"
             input["name"] = name
@@ -162,13 +177,14 @@ final class PhoneCompanion {
             input["id"] = id
             input["destination"] = destination.rawValue
         case .create(let project, let title, let notes, let priority, let send, let definitionOfDone, let agent, let model,
-                     let dispatchComment, let newProjectName, let planMarkdown):
+                     let dispatchComment, let newProjectName, let planMarkdown, let issueType):
             action = newProjectName == nil ? "create_task" : "capture_task"
             input["boardId"] = project
             input["newProjectName"] = newProjectName
             input["title"] = title
             input["notes"] = notes
             input["planMarkdown"] = planMarkdown
+            input["issueType"] = issueType?.rawValue
             input["definitionOfDone"] = definitionOfDone
             input["priority"] = priority.rawValue
             input["status"] = send ? WorkStatus.sent.rawValue : WorkStatus.todo.rawValue
@@ -241,7 +257,7 @@ final class PhoneCompanion {
             case .dueDate(let date):
                 action = "update_task"
                 input["dueDate"] = date.map { $0 as Any } ?? NSNull()
-            case .title, .notes, .definitionOfDone:
+            case .title, .notes, .definitionOfDone, .issueType:
                 action = "update_task"
                 input[edit.field.rawValue] = edit.value
             }

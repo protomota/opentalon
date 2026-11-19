@@ -7,6 +7,7 @@ private struct TaskDraft: Equatable {
     var notes: String
     var criteria: String
     var priority: Priority
+    var issueType: IssueType
     var due: String?
 
     init(_ item: WorkItem) {
@@ -14,6 +15,7 @@ private struct TaskDraft: Equatable {
         notes = item.notes
         criteria = item.definitionOfDone
         priority = item.priority
+        issueType = item.kind
         due = item.dueDate
     }
 
@@ -22,6 +24,7 @@ private struct TaskDraft: Equatable {
         if title != saved.title { fields["title"] = title }
         if notes != saved.notes { fields["notes"] = notes }
         if criteria != saved.criteria { fields["definitionOfDone"] = criteria }
+        if issueType != saved.issueType { fields["issueType"] = issueType.rawValue }
         if priority != saved.priority { fields["priority"] = priority.rawValue }
         if due != saved.due { fields["dueDate"] = due.map { $0 as Any } ?? NSNull() }
         return fields
@@ -79,6 +82,7 @@ struct TaskDetails: View {
         let context: String
     }
     @State private var planEdit: PlanEdit?
+    @State private var showHistory = false
     @State private var confirmForceComplete = false
     @Environment(WorkspaceModel.self) private var model
     @Environment(\.palette) private var palette
@@ -165,6 +169,8 @@ struct TaskDetails: View {
                         Button("Mark Done Anyway") { confirmForceComplete = true }
                             .disabled(dirty || saving || commentDirty)
                     }
+                    Button("View revision history", systemImage: "clock.arrow.circlepath") { showHistory = true }
+                        .disabled(dirty || saving).accessibilityIdentifier("taskHistory")
                     TaskComments(item: item, dirty: $commentDirty)
                     Divider()
                     HStack {
@@ -177,6 +183,9 @@ struct TaskDetails: View {
             }
         }
         .background(palette.panel)
+        .sheet(isPresented: $showHistory) {
+            MacTaskHistoryView(itemID: item.id).frame(minWidth: 600, minHeight: 650)
+        }
         .sheet(item: $planEdit) { edit in
             PlanDocumentView(markdown: edit.markdown,
                              draft: UserDefaults.standard.string(forKey: "planDraft." + edit.id),
@@ -250,6 +259,11 @@ struct TaskDetails: View {
                                   title: "Project", symbol: "folder", choices: model.boards.map(\.id),
                                   compact: true, label: model.projectName)
                         .disabled(dirty || saving || commentDirty)
+                }
+                GridRow {
+                    property("Issue type")
+                    BoardDropdown(selection: $draft.issueType, title: "Issue type", symbol: draft.issueType.symbol,
+                                  choices: IssueType.allCases, compact: true, label: \.rawValue)
                 }
                 GridRow {
                     property("Priority")
@@ -485,5 +499,31 @@ private struct RunDetails: View {
 
     private func answer(_ approval: AgentRun.Approval, allow: Bool) {
         perform("answer_agent_approval", fields: ["approvalId": approval.id, "allow": allow])
+    }
+}
+
+
+private struct MacTaskHistoryView: View {
+    @Environment(WorkspaceModel.self) private var model
+    @Environment(\.palette) private var palette
+    @State private var page: TaskHistoryPage?
+    let itemID: String
+
+    var body: some View {
+        TaskHistoryView(page: page, colors: OpenTalonColors(theme: palette.theme)) { before in
+            var input: [String: Any] = ["id": itemID, "limit": 20]
+            input["beforeVersion"] = before
+            let result: TaskHistoryPage = try await model.service.call("get_task_history", input)
+            page = before == nil ? result : page?.merging(result) ?? result
+        } restore: { entry in
+            let current: ItemResponse = try await model.service.call("get_task", ["id": itemID])
+            guard current.task.revision == page?.revision else {
+                throw ServiceFailure(code: "CONFLICT", message: "This task changed. Close history and review the latest task before restoring.")
+            }
+            try await model.mutate("restore_task_revision", ["id": itemID, "historyID": entry.id,
+                                                            "expectedRevision": current.task.revision])
+            page = try await model.service.call("get_task_history", ["id": itemID, "limit": 20])
+            return "Revision restored. Newer versions remain in history."
+        }
     }
 }

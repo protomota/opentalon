@@ -106,7 +106,7 @@ install -m 644 "$source_dir/assets/opentalon-logo-1024.png" "$resources/assets/o
 install -m 644 "$repo/assets/claude-mark.png" "$repo/assets/openai-mark.png" "$resources/"
 magick "$repo/assets/protomota-logo.png" -resize 88x88 "$resources/protomota-logo.png"
 magick "$repo/assets/opentalon-wordmark.png" -resize 720x "$resources/wordmark.png"
-for module in store contracts comments mcp mcp-bridge mcp-extension agent-readiness agent-runner agent-setup; do
+for module in task-history store contracts comments mcp mcp-bridge mcp-extension agent-readiness agent-runner agent-setup; do
   install -m 644 "$source_dir/runtime/$module.cjs" "$resources/service/$module.cjs"
 done
 for module in service daily-backup backup-once; do

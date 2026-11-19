@@ -134,7 +134,7 @@ final class WorkspaceModel {
 
     func write<Response: Decodable>(_ action: String, _ input: [String: Any]) async throws -> Response {
         var fields = input
-        if fields["requestKey"] == nil { fields["requestKey"] = UUID().uuidString }
+        if fields["requestKey"] == nil { fields["requestKey"] = "mac:" + UUID().uuidString }
         let result: Response = try await service.call(action, fields)
         try await refresh()
         return result
@@ -150,7 +150,7 @@ final class WorkspaceModel {
 
     func saveNewTask(_ input: [String: Any], newProjectName: String? = nil) async throws -> WorkItem {
         var fields = input
-        if fields["requestKey"] == nil { fields["requestKey"] = UUID().uuidString }
+        if fields["requestKey"] == nil { fields["requestKey"] = "mac:" + UUID().uuidString }
         fields["newProjectName"] = newProjectName
         let result: ItemResponse = try await service.call(newProjectName == nil ? "create_task" : "capture_task", fields)
         scheduleRefresh()
@@ -297,14 +297,15 @@ final class WorkspaceModel {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         return (!filterPriority || priority == nil || item.priority == priority) &&
             (query.isEmpty || item.reference.localizedCaseInsensitiveContains(query) ||
+             item.kind.rawValue.localizedCaseInsensitiveContains(query) ||
              item.title.localizedCaseInsensitiveContains(query) || item.notes.localizedCaseInsensitiveContains(query))
     }
 
     func createItem(title: String, notes: String, definitionOfDone: String, project: String,
-                    status: WorkStatus, priority: Priority, planMarkdown: String? = nil) async throws {
+                    status: WorkStatus, priority: Priority, planMarkdown: String? = nil, issueType: IssueType = .issue) async throws {
         var fields: [String: Any] = [
             "boardId": project, "title": title, "notes": notes, "definitionOfDone": definitionOfDone,
-            "status": status.rawValue, "priority": priority.rawValue
+            "status": status.rawValue, "priority": priority.rawValue, "issueType": issueType.rawValue
         ]
         fields["planMarkdown"] = planMarkdown
         try await sendable("create_task", fields, title: title, choosingModel: status == .sent)
@@ -376,7 +377,7 @@ final class WorkspaceModel {
 
     private func stageSend(_ name: String, _ fields: [String: Any], title: String) {
         var fields = fields
-        if fields["requestKey"] == nil { fields["requestKey"] = UUID().uuidString }
+        if fields["requestKey"] == nil { fields["requestKey"] = "mac:" + UUID().uuidString }
         pendingSend = (name, fields, title)
         sheet = .send
     }
@@ -387,7 +388,7 @@ final class WorkspaceModel {
             return
         }
         var fields = fields
-        fields["requestKey"] = UUID().uuidString
+        fields["requestKey"] = "mac:" + UUID().uuidString
         do { try await mutate(name, fields) }
         catch let failure as ServiceFailure where isSetup(failure) { stageSend(name, fields, title: title) }
     }

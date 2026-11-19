@@ -528,6 +528,7 @@ private struct CapturedTaskDetail: View {
                     Text(current.title).font(.title2.weight(.semibold))
                     LabeledContent("Project", value: current.project)
                     LabeledContent("Priority", value: current.priority.title)
+                    LabeledContent("Issue type", value: (current.issueType ?? .issue).rawValue)
                 }
                 .listRowBackground(colors.card)
                 if !current.notes.isEmpty {
@@ -2240,6 +2241,7 @@ private struct TaskCardLabel: View {
     }
 
     @ViewBuilder private var metadata: some View {
+        if workspace.displayedIssueType(for: task) == .bug { IssueTypeBadge(.bug, tint: colors.actionAccent) }
         if showProject { Text(workspace.projectName(workspace.displayedProject(for: task))) }
         let priority = workspace.displayedPriority(for: task)
         if priority != .none {
@@ -2329,6 +2331,7 @@ private struct TaskView: View {
         let context: String
     }
     @State private var planEdit: PlanEdit?
+    @State private var showHistory = false
     @Environment(\.dismiss) private var dismiss
     @State private var confirmTrash = false
     @State private var confirmArchive = false
@@ -2369,6 +2372,7 @@ private struct TaskView: View {
                                 .foregroundStyle(colors.muted)
                         }
                         Text(workspace.displayedText(for: task, field: .title)).font(.title2.weight(.semibold))
+                        if workspace.displayedIssueType(for: task) == .bug { IssueTypeBadge(.bug, tint: colors.actionAccent) }
                         quickActions(for: task, in: snapshot)
                         if let pickup = task.agentPickup {
                             Label(pickupCaption(macName: snapshot.macName, date: pickup.at), systemImage: "checkmark.icloud")
@@ -2393,6 +2397,14 @@ private struct TaskView: View {
                 if !workspace.displayedText(for: task, field: .definitionOfDone).isEmpty {
                     Section("Definition of done") { Text(workspace.displayedText(for: task, field: .definitionOfDone)).textSelection(.enabled) }
                         .listRowBackground(colors.card)
+                }
+                Section("History") {
+                    Button { showHistory = true } label: {
+                        PhoneActionLabel(title: "View revision history", systemImage: "clock.arrow.circlepath")
+                    }
+                    .accessibilityIdentifier("taskHistory")
+                    .disabled(snapshot.historyByTask == nil)
+                    if snapshot.historyByTask == nil { Text("Update OpenTalon on your Mac to sync revision history.").font(.caption) }
                 }
                 Section("Plan") {
                     Button {
@@ -2499,6 +2511,16 @@ private struct TaskView: View {
             }
             .sheet(item: $notesEdit) { edit in
                 NotesEditor(edit: edit)
+            }
+            .sheet(isPresented: $showHistory) {
+                if let task = workspace.snapshot?.tasks.first(where: { $0.id == taskID }) {
+                    TaskHistoryView(page: workspace.historyPage(for: taskID), colors: colors, waitingForMac: workspace.isLoadingHistory(for: taskID)) { before in
+                        try workspace.loadHistory(for: taskID, before: before)
+                    } restore: { entry in
+                        try workspace.restoreHistory(entry, for: task)
+                        return "Revision saved locally and queued for your Mac."
+                    }
+                }
             }
             .sheet(item: $planEdit) { edit in
                 PlanDocumentView(markdown: edit.markdown, draft: workspace.planDraft(for: edit.id),
@@ -2706,6 +2728,11 @@ private struct TaskView: View {
                 else if $0 == .done, task.assigned || status == .sent { confirmForceComplete = true }
                 else { queueField(.status($0), for: task, in: snapshot) }
             }
+            if snapshot.supportsTaskTypes {
+                fieldMenu("Issue type", selected: workspace.displayedIssueType(for: task), choices: IssueType.allCases, label: \.rawValue) {
+                    queueField(.issueType($0), for: task, in: snapshot)
+                }
+            } else { LabeledContent("Issue type", value: workspace.displayedIssueType(for: task).rawValue) }
             fieldMenu("Priority", selected: priority, choices: PhoneTask.Priority.allCases, label: \.title) {
                 queueField(.priority($0), for: task, in: snapshot)
             }
@@ -2721,6 +2748,7 @@ private struct TaskView: View {
             LabeledContent("Project", value: workspace.projectName(projectID))
             LabeledContent("Status", value: status.rawValue)
             LabeledContent("Priority", value: priority.title)
+            LabeledContent("Issue type", value: workspace.displayedIssueType(for: task).rawValue)
             LabeledContent("Due date", value: dueLabel)
             if !snapshot.supportsFieldEditing {
                 Text("Update OpenTalon on your Mac to edit ticket fields.")
@@ -3184,7 +3212,7 @@ private struct QueueView: View {
         switch request.action {
         case .send(_, _, let agent), .editField(_, _, .status(.sent, let agent, _, _)),
              .setField(_, _, .status(.sent, let agent, _, _)),
-             .create(_, _, _, _, true, _, let agent, _, _, _, _): agent
+             .create(_, _, _, _, true, _, let agent, _, _, _, _, _): agent
         default: nil
         }
     }
@@ -3192,6 +3220,8 @@ private struct QueueView: View {
     private func kind(_ request: PhoneRequest) -> String {
         switch request.action {
         case .createProject: "Create project"
+        case .loadHistory: "Load task history"
+        case .restoreRevision: "Restore task revision"
         case .savePlan: "Save plan"
         case .organizeTask(_, let destination):
             switch destination {
@@ -3199,7 +3229,7 @@ private struct QueueView: View {
             case .trash: "Send to Trash"
             case .active: "Restore task from Archive"
             }
-        case .create(_, _, _, _, let send, _, _, _, _, _, _): send ? "New task for agent" : "New to-do"
+        case .create(_, _, _, _, let send, _, _, _, _, _, _, _): send ? "New task for agent" : "New to-do"
         case .send: PhoneTask.Status.sent.mobileStage
         case .complete: "Mark done"
         case .forceComplete: "Mark done anyway"
@@ -3225,6 +3255,7 @@ private struct CaptureView: View {
         let notes: String
         let definitionOfDone: String
         let planMarkdown: String?
+        let issueType: IssueType
         let priority: PhoneTask.Priority
     }
 
@@ -3239,6 +3270,7 @@ private struct CaptureView: View {
     @State private var includePlan = false
     @State private var project: String?
     @State private var priority: PhoneTask.Priority?
+    @State private var issueType: IssueType?
     @State private var sendToAgent = false
     @State private var showSend = false
     @State private var dispatchQueued = false
@@ -3284,6 +3316,11 @@ private struct CaptureView: View {
                         Text("Auto").tag(nil as PhoneTask.Priority?)
                         ForEach(PhoneTask.Priority.allCases) { Text($0.title).tag(Optional($0)) }
                     }
+                    Picker("Issue type", selection: Binding(get: { issueType ?? .inferred(from: idea) }, set: { issueType = $0 })) {
+                        ForEach(IssueType.allCases) { Label($0.rawValue, systemImage: $0.symbol).tag($0) }
+                    }
+                    .disabled(workspace.snapshot?.supportsTaskTypes != true)
+                    .accessibilityIdentifier("newTaskIssueType")
                     Toggle("Include a plan", isOn: $includePlan)
                         .tint(colors.actionAccent)
                         .disabled(workspace.snapshot?.supportsTaskPlans != true)
@@ -3397,6 +3434,10 @@ private struct CaptureView: View {
                 error = "Choose an available project."
                 return
             }
+            let type = issueType ?? IssueType.inferred(from: idea)
+            guard type == .issue || snapshot.supportsTaskTypes else {
+                error = "Update OpenTalon on your Mac to create Bug items."; return
+            }
             let finalTitle = editedTitle.isEmpty ? draft.title : editedTitle
             let finalNotes = notes.isEmpty ? draft.notes : notes
             let finalDefinition = definitionOfDone.isEmpty ? draft.definitionOfDone : definitionOfDone
@@ -3412,7 +3453,7 @@ private struct CaptureView: View {
                 }
             } else { plan = nil }
             let task = PreparedTask(workspaceID: snapshot.workspaceID, projectID: projectID, newProjectName: newProject,
-                                    title: finalTitle, notes: finalNotes, definitionOfDone: finalDefinition, planMarkdown: plan,
+                                    title: finalTitle, notes: finalNotes, definitionOfDone: finalDefinition, planMarkdown: plan, issueType: type,
                                     priority: priority ?? TaskDrafting.capturePriority(in: idea))
             if sendToAgent {
                 preparedTask = task
@@ -3434,7 +3475,7 @@ private struct CaptureView: View {
             projectID: task.projectID, title: task.title, notes: task.notes, priority: task.priority,
             sendToAgent: agent != nil, definitionOfDone: task.definitionOfDone.isEmpty ? nil : task.definitionOfDone,
             agent: agent, model: model, dispatchComment: comment, newProjectName: task.newProjectName,
-            planMarkdown: task.planMarkdown
+            planMarkdown: task.planMarkdown, issueType: task.issueType
         ))
     }
 }
@@ -3659,6 +3700,7 @@ private struct PhoneAssistantView: View {
             let fields = [task.id, task.taskKey ?? "", task.displayTaskID ?? "", workspace.displayedText(for: task, field: .title),
                           workspace.projectName(workspace.displayedProject(for: task)), task.notes,
                           workspace.displayedStatus(for: task).rawValue, workspace.displayedPriority(for: task).rawValue,
+                          workspace.displayedIssueType(for: task).rawValue,
                           workspace.displayedPriority(for: task) == .urgent ? "critical" : ""]
             return words.allSatisfy { word in fields.contains { $0.localizedStandardContains(word) } }
         })
@@ -3668,6 +3710,7 @@ private struct PhoneAssistantView: View {
              "projectName": workspace.projectName(workspace.displayedProject(for: task)),
              "status": workspace.displayedStatus(for: task).rawValue,
              "priority": workspace.displayedPriority(for: task).rawValue,
+             "issueType": workspace.displayedIssueType(for: task).rawValue,
              "dueDate": workspace.displayedDueDate(for: task) ?? "", "archived": workspace.isArchived(task),
              "notes": matches.count == 1 ? String(workspace.displayedText(for: task, field: .notes).prefix(800)) : "Search by task ID to read notes.",
              "planMarkdown": matches.count == 1 ? String(workspace.displayedPlan(for: task).prefix(2_000)) : "Search by task ID to read the plan.",
@@ -3709,11 +3752,15 @@ private struct PhoneAssistantView: View {
                 }
                 newProject = command.project
             } else { newProject = existing == nil && personal == nil ? "Personal" : nil }
+            guard IssueType.inferred(from: message) != .bug || snapshot.supportsTaskTypes else {
+                throw AssistantError.message("Update OpenTalon on your Mac to create Bug items.")
+            }
             let plan = TaskPlan.requested(in: message) && !command.planMarkdown.isEmpty ? command.planMarkdown : nil
             if let plan { try TaskPlan.validate(plan) }
             try workspace.queue(.create(projectID: existing?.id ?? personal?.id ?? first.id, title: title,
                                         notes: command.notes, priority: TaskDrafting.capturePriority(in: message),
-                                        sendToAgent: false, newProjectName: newProject, planMarkdown: plan))
+                                        sendToAgent: false, newProjectName: newProject, planMarkdown: plan,
+                                        issueType: IssueType.inferred(from: message)))
             result = "Task \(title) saved locally and queued for Mac. Its task ID will appear after the Mac accepts it."
         } else {
             guard let task = snapshot.tasks.first(where: {
@@ -3725,6 +3772,11 @@ private struct PhoneAssistantView: View {
                     throw AssistantError.message("Choose an existing project returned by search.")
                 }
                 try workspace.queueField(.project(project.id), for: task, in: workspaceID)
+            case "issueType":
+                guard snapshot.supportsTaskTypes, let type = IssueType(rawValue: command.value) else {
+                    throw AssistantError.message("Choose Issue or Bug, and update OpenTalon on your Mac if needed.")
+                }
+                try workspace.queueField(.issueType(type), for: task, in: workspaceID)
             case "priority":
                 guard let priority = PhoneTask.Priority(rawValue: command.value) else { throw AssistantError.message("Choose a valid priority.") }
                 try workspace.queueField(.priority(priority), for: task, in: workspaceID)
@@ -3780,7 +3832,7 @@ private struct PhoneAssistantView: View {
                 return result
             default: throw AssistantError.message("That operation isn't supported.")
             }
-            let detail = ["priority", "status", "dueDate", "title"].contains(command.operation) && !command.value.isEmpty
+            let detail = ["priority", "status", "dueDate", "title", "issueType"].contains(command.operation) && !command.value.isEmpty
                 ? " → \(command.value)" : ""
             result = "\(task.displayTaskID ?? task.title): \(command.operation)\(detail) saved locally and queued for Mac."
             try history.append(.init(role: "action", text: result, taskID: task.id))

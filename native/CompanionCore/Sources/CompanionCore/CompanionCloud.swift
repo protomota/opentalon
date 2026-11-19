@@ -173,7 +173,7 @@ public final class CompanionCloud: CompanionTransport {
 
     public func submit(_ request: PhoneRequest) async throws -> PhoneReceipt? {
         let id = requestID(request.id)
-        if let existing = try await fetch(id, keys: ["receipt"]) { return try decodeReceipt(existing) }
+        if let existing = try await fetch(id, keys: ["receipt", "payload"]) { return try decodeReceipt(existing) }
         let record = CKRecord(recordType: Self.recordType, recordID: id)
         let url = try assetFile(request, limit: 1024 * 1024)
         defer { try? FileManager.default.removeItem(at: url) }
@@ -187,7 +187,19 @@ public final class CompanionCloud: CompanionTransport {
         let id = requestID(receipt.requestID)
         guard let record = try await fetch(id, keys: ["workspaceID", "payload", "receipt"]) else { return }
         if let previous = try decodeReceipt(record), previous == receipt || previous.outcome != .waiting { return }
-        record["receipt"] = try JSONEncoder().encode(receipt)
+        // History pages can exceed CloudKit's inline record limit. A terminal receipt
+        // no longer needs the original request, so reuse the existing asset field.
+        // This keeps the production CloudKit schema compatible with older clients.
+        var assetURL: URL?
+        defer { if let assetURL { try? FileManager.default.removeItem(at: assetURL) } }
+        if receipt.history != nil {
+            let url = try assetFile(receipt, limit: 32 * 1024 * 1024)
+            assetURL = url
+            record["payload"] = CKAsset(fileURL: url)
+            let marker = PhoneReceipt(requestID: receipt.requestID, outcome: receipt.outcome,
+                                      revision: receipt.revision, message: "history-asset-v1")
+            record["receipt"] = try JSONEncoder().encode(marker)
+        } else { record["receipt"] = try JSONEncoder().encode(receipt) }
         try await save(record)
         if receipt.outcome != .waiting { pendingIDs.remove(id) }
     }
@@ -240,7 +252,11 @@ public final class CompanionCloud: CompanionTransport {
 
     private func decodeReceipt(_ record: CKRecord) throws -> PhoneReceipt? {
         guard let bytes = record["receipt"] as? Data else { return nil }
-        return try JSONDecoder().decode(PhoneReceipt.self, from: bytes)
+        let receipt = try JSONDecoder().decode(PhoneReceipt.self, from: bytes)
+        if receipt.message == "history-asset-v1", record["payload"] is CKAsset {
+            return try decodeAsset(record, limit: 32 * 1024 * 1024)
+        }
+        return receipt
     }
 
     private func assetFile<Value: Encodable>(_ value: Value, limit: Int) throws -> URL {

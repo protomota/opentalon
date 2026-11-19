@@ -1,3 +1,4 @@
+import CompanionCore
 import SwiftUI
 
 struct KanbanView: View {
@@ -300,7 +301,10 @@ struct TaskCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            PriorityBadge(priority: item.priority)
+            HStack(spacing: 6) {
+                if item.kind == .bug { IssueTypeBadge(.bug, tint: palette.actionAccent) }
+                PriorityBadge(priority: item.priority)
+            }
             if let key = item.taskKey {
                 Text(key).font(.system(.caption2, design: .monospaced)).foregroundStyle(palette.muted)
             }

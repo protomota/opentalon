@@ -64,6 +64,8 @@ struct WorkItem: Codable, Identifiable, Equatable {
     let title: String
     let notes: String
     let planMarkdown: String?
+    let issueType: IssueType?
+    var kind: IssueType { issueType ?? .issue }
     let status: WorkStatus
     let priority: Priority
     let definitionOfDone: String

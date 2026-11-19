@@ -22,3 +22,9 @@ Tasks can be **Issue** or **Bug**. Bug labels appear on cards and details, and t
 **View revision history** in task details shows saved changes to fields, project, status, order and the Markdown plan. Preview a revision before restoring it. A restore creates a new entry and retains newer history and current comments. It stops active agent work and reopens archived tasks; a saved Sent to agent status restores as To do. Restore a trashed task before restoring its fields. Existing tasks start with a migration baseline; edits made before this update cannot be reconstructed.
 
 History is stored in the Mac's SQLite database and both full backup formats. Mobile syncs the newest revision and can request older pages from the Mac. Cached revisions remain readable offline; older pages and acknowledged restores require the Mac to be online. History is removed only when its task is permanently deleted or the workspace is replaced from a backup.
+
+## Task Activity and user Comments
+
+Task details separate **Activity** from **Comments** on Mac, iPhone and iPad. Activity automatically records task edits, moves, ordering, Archive/Trash actions, agent pickup and progress. Open **View all activity** for the timeline, expandable details and older entries. **View revision history** remains available for previewing and restoring saved task content.
+
+Comments are only messages explicitly entered by the user. Agents use `add_task_activity` for updates and `report_agent_progress` for completion proof. Existing `add_task_comment` clients are redirected to Activity. Known older agent reports and screenshots are migrated to Activity; older messages without reliable authorship are preserved there as earlier messages. Activity and screenshots survive JSON and SQLite backups. Both the Mac and mobile app need this update for Activity synchronization.

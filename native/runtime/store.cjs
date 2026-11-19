@@ -12,7 +12,8 @@ const {
 } = require('./comments.cjs')
 
 const taskHistory = require('./task-history.cjs')
-const FORMAT = 10
+const taskActivity = require('./task-activity.cjs')
+const FORMAT = 11
 const archiveAfterMs = 7 * 24 * 60 * 60 * 1000
 const taskKeyPattern = /^[A-Z]{3}-[0-9]{3,16}$/
 const defaultAgentSettings = { defaultAgent: 'codex', workingFolder: '' }
@@ -24,7 +25,7 @@ function validDueDate(value) {
 }
 const priorities = ['Urgent', 'High', 'Medium', 'Low', 'None']
 const taskSelect = `SELECT tasks.*,
-  (SELECT count(*) FROM task_comments WHERE task_id=tasks.id) AS comment_count,
+  (SELECT count(*) FROM task_comments WHERE task_id=tasks.id AND json_extract(data,'$.source')='user') AS comment_count,
   (SELECT count(*) FROM comment_images JOIN task_comments ON task_comments.id=comment_images.comment_id WHERE task_comments.task_id=tasks.id) AS image_count
   FROM tasks`
 const APPLICATION_ID = 0x4f54414c
@@ -172,6 +173,8 @@ class Store {
       if (current < 8) this.migratePlans()
       if (current < 9) this.migrateIssueTypes()
       if (current < 10) taskHistory.migrate(this)
+      if (current < 11) taskActivity.migrate(this)
+      this.activityReady = true
       this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;')
       fs.chmodSync(this.file, 0o600)
     } catch (error) {
@@ -429,7 +432,7 @@ class Store {
     return comments(this, taskId)
   }
   commentImage(id) {
-    const image = this.db.prepare('SELECT * FROM comment_images WHERE id=?').get(id)
+    const image = this.db.prepare('SELECT * FROM comment_images WHERE id=?').get(id) || this.db.prepare('SELECT * FROM activity_images WHERE id=?').get(id)
     if (!image) throw new AppError('NOT_FOUND', 'This screenshot no longer exists.')
     return {
       id: image.id,
@@ -529,13 +532,19 @@ class Store {
     if (!row) throw new AppError('NOT_FOUND', 'This agent run no longer exists.')
     return JSON.parse(row.data)
   }
-  saveAgentJob(job) {
+  saveAgentJob(job, {activity=true} = {}) {
+    const previousRow = this.db.prepare('SELECT data FROM agent_jobs WHERE id=?').get(job.id)
+    const previous = previousRow ? JSON.parse(previousRow.data) : null
     const saved = { ...job, updatedAt: new Date().toISOString() }
     this.db
       .prepare(
         'INSERT INTO agent_jobs VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data'
       )
       .run(saved.id, saved.taskId, JSON.stringify(saved))
+    if (this.activityReady && activity && (!previous || previous.state !== saved.state || previous.summary !== saved.summary || previous.pickedUpAt !== saved.pickedUpAt || JSON.stringify(previous.approval) !== JSON.stringify(saved.approval))) {
+      const agent = saved.agent === 'claude-code' ? 'Claude' : 'Codex'
+      taskActivity.record(this,saved.taskId,{actor:'OpenTalon',kind:'agent',summary: saved.pickedUpAt && !previous?.pickedUpAt ? `${agent} picked up the task` : `${agent} run: ${saved.state}`,detail:saved.summary || '',data:{agent:saved.agent,runId:saved.id}})
+    }
     return saved
   }
   updateAgentJob(id, patch, { pickedUp = false } = {}) {
@@ -919,12 +928,13 @@ class Store {
           : null,
     }
   }
-  dispatch(name, input = {}) {
-    const job = this.queue.then(() => this.execute(name, input))
+  dispatch(name, input = {}, origin = 'Connected agent') {
+    const job = this.queue.then(() => this.execute(name, input, origin))
     this.queue = job.catch(() => {})
     return job
   }
-  async execute(name, a) {
+  async execute(name, a, origin = 'Connected agent') {
+    if (a.dispatchComment && !origin.startsWith('You')) throw new AppError('INVALID_ARGUMENT','Dispatch comments are only for text entered by the user. Record agent context with add_task_activity.')
     const markdown = name === 'set_task_plan' ? a.markdown : a.planMarkdown
     if (markdown !== undefined && (typeof markdown !== 'string' || markdown.length > 100000 ||
         !markdown.isWellFormed() || markdown.includes('\0')))
@@ -938,6 +948,7 @@ class Store {
       name,
       a,
       [
+        'add_user_comment',
         'snapshot',
         'capture_task',
         'companion_organize_task',
@@ -967,6 +978,7 @@ class Store {
       }
     if (name === 'list_boards') return { boards: this.boards(), revision: this.revision() }
     if (name === 'get_task') return { task: this.task(a.id) }
+    if (name === 'list_task_activity') return taskActivity.page(this, a.taskId, a.beforeSequence, a.limit)
     if (name === 'get_task_history') return taskHistory.page(this, a.id, a.beforeVersion, a.limit)
     if (name === 'list_tasks' || name === 'list_trash') return this.list(a, name === 'list_trash')
     if (name === 'get_preferences') return this.preferences()
@@ -1100,8 +1112,14 @@ class Store {
           .prepare('UPDATE task_comments SET data=? WHERE id=?')
           .run(JSON.stringify({ ...data, delivery: 'pending', runId: null }), a.id)
         result = { comment: this.comments(row.task_id).find((comment) => comment.id === a.id) }
-      } else if (name === 'add_task_comment') {
-        result = { comment: insertComment(this, a.taskId, a.text, a.images, a.notifyAgent) }
+      } else if (name === 'add_user_comment') {
+        result = { comment: insertComment(this, a.taskId, a.text, a.images, a.notifyAgent, {actor:origin.startsWith('You') ? origin : 'You'}) }
+      } else if (name === 'add_task_comment' || name === 'add_task_activity') {
+        const task = this.task(a.taskId)
+        if(task.deleted) throw new AppError('IN_TRASH','Restore the task before adding activity.')
+        if(!a.text.trim() && !a.images?.length) throw new AppError('EMPTY_COMMENT','Write an activity update or attach a screenshot.')
+        const activity = taskActivity.record(this,a.taskId,{actor:origin,kind:'agent',summary:'Agent update',detail:a.text},a.images || [])
+        result = {activity,...(name === 'add_task_comment' ? {comment:activity,redirectedToActivity:true} : {})}
       } else if (name === 'set_agent_settings') {
         if (
           a.workingFolder &&
@@ -1141,11 +1159,9 @@ class Store {
               'INVALID_ARGUMENT',
               'Keep the completion report, proof and definition of done within 10,000 characters combined.'
             )
-          completionReport = insertComment(this, task.id, report, [], false, {
-            agent: job.agent,
-            runId: job.id,
-          })
+          completionReport = taskActivity.record(this, task.id, {actor:job.agent === 'codex' ? 'Codex' : 'Claude',kind:'agent',summary:'Completion report',detail:report,data:{agent:job.agent,runId:job.id}})
         }
+        if (a.state !== 'done') taskActivity.record(this, task.id, {actor:job.agent === 'codex' ? 'Codex' : 'Claude',kind:'agent',summary:a.state === 'working' ? 'Agent progress' : a.state === 'needs-input' ? 'Agent needs your input' : 'Agent run failed',detail:a.summary,data:{agent:job.agent,runId:job.id}})
         const hasNewComments =
           a.state === 'done' &&
           this.comments(task.id).some((comment) => ['pending', 'queued'].includes(comment.delivery))
@@ -1163,7 +1179,7 @@ class Store {
               (hasNewComments
                 ? '\nNew comments are waiting for the next check; this task remains In progress.'
                 : ''),
-          }),
+          }, {activity:false}),
           task,
           ...(completionReport ? { completionReport } : {}),
         }
@@ -1182,6 +1198,8 @@ class Store {
             .prepare('UPDATE boards SET name=?,revision=? WHERE id=?')
             .run(text(a.name, 'Board name'), revision, a.id)
           result = { board: this.board(a.id) }
+          for (const task of this.db.prepare('SELECT id FROM tasks WHERE board_id=?').all(a.id))
+            taskHistory.record(this,this.task(task.id),'rename_board',origin)
         } else {
           if (this.db.prepare('SELECT 1 FROM tasks WHERE board_id=? LIMIT 1').get(a.id))
             throw new AppError(
@@ -1410,6 +1428,7 @@ class Store {
           this.backfillTaskKeys()
           for (const row of restore.taskHistory) this.db.prepare('INSERT INTO task_history VALUES (?,?,?,?,?,?,?,?)').run(row.id,row.task_id,row.version,row.saved_at,row.action,row.origin,row.changes_json,row.state_json)
           restoreComments(this, restore.comments, restore.commentImages)
+          taskActivity.restoreRows(this, restore.activity, restore.activityImages)
           this.set('theme', restore.preferences.theme)
           this.set('selectedBoard', restore.preferences.selectedBoard)
           this.set('preferencesRevision', revision)
@@ -1427,10 +1446,11 @@ class Store {
               summary: ['done', 'failed', 'canceled', 'review'].includes(job.state)
                 ? job.summary
                 : 'Restored from backup. Review the existing thread before sending again.',
-            })
+            }, {activity:false})
           for (const task of this.snapshot().tasks)
             if (!task.deleted && task.status === 'Sent to agent')
               this.move(task, { status: 'To do' }, revision)
+          for (const task of this.db.prepare('SELECT id FROM tasks').all()) taskActivity.record(this,task.id,{actor:origin,kind:'restore',summary:'Workspace restored from backup',detail:'Task data, comments, activity and revision history were restored from the reviewed backup.'})
           result = { restored: restore.summary, safetyBackup: preview.safetyBackup }
         } else {
           const deletion = preview.action === 'purge_archived_tasks'
@@ -1443,7 +1463,7 @@ class Store {
           result = { permanentlyDeleted: preview.taskIds.length }
         }
       } else throw new AppError('UNKNOWN_ACTION', 'Unavailable action.')
-      taskHistory.recordRevision(this, revision, name, a.requestKey.startsWith('phone:') ? 'Mobile app' : a.requestKey.startsWith('mac:') ? 'Mac app' : 'Connected agent')
+      taskHistory.recordRevision(this, revision, name, origin)
       this.set('revision', revision)
       result.revision = revision
       this.db
@@ -1483,6 +1503,7 @@ class Store {
         agentRuns: this.agentJobs().map(({ approval, ...job }) => job),
         agentAssignments: this.agentAssignments(),
         ...exportComments(this),
+        ...taskActivity.exportRows(this),
         boards: this.db.prepare('SELECT * FROM boards ORDER BY position,id').all(),
         tasks: this.db.prepare('SELECT * FROM tasks ORDER BY position,id').all(),
         taskHistory: this.db.prepare('SELECT * FROM task_history ORDER BY task_id,version').all(),
@@ -1576,7 +1597,7 @@ class Store {
         fs.closeSync(descriptor)
       }
       let boards, tasks, settings, format
-      let history = []
+      let history = [], activity = [], activityImages = []
       let icons = {}
       let allTasksOrder = []
       let commentData = { comments: [], commentImages: [] }
@@ -1592,7 +1613,7 @@ class Store {
             'This backup needs a newer OpenTalon. Current data is unchanged.'
           )
         if (
-          ![1, 2, 3, 4, 5, 6, 7, 8, 9, FORMAT].includes(payload.formatVersion) ||
+          ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, FORMAT].includes(payload.formatVersion) ||
           !Array.isArray(payload.boards) ||
           !Array.isArray(payload.tasks) ||
           !payload.preferences ||
@@ -1606,6 +1627,8 @@ class Store {
         boards = payload.boards
         tasks = payload.tasks
         history = payload.formatVersion >= 10 ? payload.taskHistory : []
+        activity = payload.formatVersion >= 11 ? payload.activity : []
+        activityImages = payload.formatVersion >= 11 ? payload.activityImages : []
         settings = payload.preferences
         icons = payload.boardIcons
         allTasksOrder = payload.allTasksOrder
@@ -1623,7 +1646,7 @@ class Store {
             'This backup needs a newer OpenTalon. Current data is unchanged.'
           )
         if (
-          ![1, 2, 3, 4, 5, 6, 7, 8, 9, FORMAT].includes(format) ||
+          ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, FORMAT].includes(format) ||
           db.prepare('PRAGMA application_id').get().application_id !== APPLICATION_ID
         )
           throw new AppError('INVALID_BACKUP', 'This is not a supported OpenTalon backup.')
@@ -1638,6 +1661,10 @@ class Store {
         boards = db.prepare('SELECT * FROM boards ORDER BY position,id').all()
         tasks = db.prepare('SELECT * FROM tasks ORDER BY position,id').all()
         history = format >= 10 ? db.prepare('SELECT * FROM task_history ORDER BY task_id,version').all() : []
+        if(format >= 11) {
+          activity = db.prepare('SELECT * FROM task_activity ORDER BY sequence').all()
+          activityImages = db.prepare('SELECT * FROM activity_images ORDER BY rowid').all().map(row=>({...row,data:Buffer.from(row.bytes).toString('base64'),bytes:undefined}))
+        }
         settings = Object.fromEntries(
           db
             .prepare('SELECT key,value FROM settings')
@@ -1774,6 +1801,7 @@ class Store {
         )
           throw new AppError('INVALID_BACKUP', 'This backup contains invalid agent history.')
       }
+      taskActivity.validateRows(activity, activityImages, tasks, commentData.comments)
       taskHistory.validateRows(history, tasks)
       validateComments(commentData.comments, commentData.commentImages, tasks)
       const taskIds = new Set(tasks.map((task) => task.id))
@@ -1781,7 +1809,7 @@ class Store {
         boards,
         tasks,
         ...commentData,
-        taskHistory: history,
+        taskHistory: history, activity, activityImages,
         agentSettings,
         agentRuns: agentRuns.map(
           ({

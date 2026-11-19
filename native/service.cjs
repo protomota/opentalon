@@ -1,4 +1,5 @@
 const taskHistory = require('./task-history.cjs')
+const taskActivity = require('./task-activity.cjs')
 // Private JSON-line transport between the Swift application and the shared local service.
 // The network-facing connector retains its own allowlist and authentication.
 const fs = require('node:fs')
@@ -31,7 +32,7 @@ let chatController
 const chatTools = tools.filter(({ name }) => [
   'list_boards', 'create_board', 'rename_board', 'set_board_icon',
   'list_tasks', 'get_task', 'create_task', 'update_task', 'set_task_plan', 'get_task_history', 'restore_task_revision', 'move_task',
-  'trash_task', 'list_trash', 'restore_task', 'list_task_comments', 'add_task_comment',
+  'trash_task', 'list_trash', 'restore_task', 'list_task_comments', 'list_task_activity', 'add_task_activity',
 ].includes(name))
 
 async function chat(input) {
@@ -60,7 +61,7 @@ async function chat(input) {
           throw new AppError('TOOL_UNAVAILABLE', 'Use the task’s Send to agent or attachment controls for this action.')
         const result = await dispatch(name, args)
         if (chatTools.find((tool) => tool.name === name)?.mutates) {
-          const record = result.task ?? result.board ?? (name === 'add_task_comment' ? store.task(args.taskId) : null)
+          const record = result.task ?? result.board ?? (name === 'add_task_activity' ? store.task(args.taskId) : null)
           send({ event: 'agent-chat-activity', name, title: record?.title ?? record?.name })
         }
         return result
@@ -80,15 +81,15 @@ async function chat(input) {
   }
 }
 
-async function dispatch(name, input) {
+async function dispatch(name, input, origin = 'Connected agent') {
   validateAction(name, input, true)
   switch (name) {
     case 'check_task_comments':
       if (runner.suspended || runner.stopping)
         throw new AppError('BUSY', 'Try again after the current workspace operation.')
       return store.queueCommentFollowups()
-    case 'add_task_comment': {
-      const result = await store.dispatch(name, input)
+    case 'add_user_comment': {
+      const result = await store.dispatch(name, input, origin)
       if (input.notifyAgent)
         void store.queueCommentFollowups().catch((error) => console.error('OpenTalon comment dispatch:', error.message))
       return result
@@ -104,7 +105,7 @@ async function dispatch(name, input) {
       try {
         if (runner.current || runner.ticking)
           throw new AppError('AGENT_RUNNING', 'Stop the current agent run before continuing.')
-        const result = await store.dispatch(name, input)
+        const result = await store.dispatch(name, input, origin)
         if (result.safetyBackup && daily?.status().enabled)
           void daily.run({ force: true }).catch(() => {})
         if (migrationFolder) discardMigration()
@@ -120,7 +121,7 @@ async function dispatch(name, input) {
     case 'agent_setup_fields': return setupFields(local('stdio'))
     case 'copy_terminal_setup': return { value: terminalCommand(local('stdio'), input.client) }
     case 'client_configuration': return { value: JSON.stringify(local(input.transport), null, 2) }
-    default: return store.dispatch(name, input)
+    default: return store.dispatch(name, input, origin)
   }
 }
 
@@ -186,7 +187,7 @@ async function privateAction(name, input) {
           json_extract(c.data, '$.delivery') AS delivery,
           json_extract(c.data, '$.pickedUpAt') AS picked_up_at
         FROM task_comments c JOIN tasks t ON t.id = c.task_id
-        WHERE t.deleted_at IS NULL
+        WHERE t.deleted_at IS NULL AND json_extract(c.data,'$.source')='user'
         ORDER BY c.rowid
       `).all()
       for (const row of rows) {
@@ -196,7 +197,7 @@ async function privateAction(name, input) {
         })
       }
       return {
-        workspace, commentsByTask, historyByTask: Object.fromEntries(workspace.tasks.filter(task => !task.deleted).map(task => [task.id, taskHistory.page(store, task.id, undefined, 1)])), ...agentOptions(),
+        workspace, commentsByTask, activityByTask: Object.fromEntries(workspace.tasks.filter(task=>!task.deleted).map(task=>[task.id, taskActivity.page(store, task.id, undefined, 5)])), historyByTask: Object.fromEntries(workspace.tasks.filter(task => !task.deleted).map(task => [task.id, taskHistory.page(store, task.id, undefined, 1)])), ...agentOptions(),
       }
     }
     case 'native_test_connection': return testConnection()
@@ -263,7 +264,7 @@ async function privateAction(name, input) {
         throw error
       }
     }
-    default: return dispatch(name, input)
+    default: return dispatch(name, input, input.requestKey?.startsWith('phone:') ? 'You · mobile' : 'You · Mac')
   }
 }
 

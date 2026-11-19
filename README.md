@@ -40,12 +40,12 @@ On Mac, move a card to **Sent to agent**. Choose Codex or Claude and select a mo
 
 On iPhone or iPad, open a task and tap **Send to agent**. Choose the agent and model, add an optional comment, and confirm. Your Mac starts the work after the request syncs.
 
-Follow progress on the card. Add feedback or a screenshot to continue in the same conversation, and read the completion report in **Comments**.
+Follow progress on the card. Add feedback or a screenshot to continue in the same conversation, and read the completion report in **Activity**. The Activity timeline records moves, edits, ordering, Archive/Trash actions and agent progress. **Comments** are reserved for messages you enter; agents write only to Activity. Earlier messages without reliable authorship remain preserved in Activity.
 
 <table>
-  <tr><th>Agent activity on Mac</th><th>Send to agent on iPhone</th></tr>
+  <tr><th>Task Activity on iPad</th><th>Send to agent on iPhone</th></tr>
   <tr>
-    <td align="center"><img src="docs/screenshots/mac-agent-activity.webp" alt="Mac task details showing Claude Code waiting for input, with comments below" width="540"></td>
+    <td align="center"><img src="docs/screenshots/ipad-task-activity.webp" alt="Task Activity on iPad with agent reports and an automatically recorded status change" width="420"></td>
     <td align="center"><img src="docs/screenshots/iphone-send-to-agent.webp" alt="Send to agent on iPhone with Codex and Claude choices, a model selector, and an optional comment" width="185"></td>
   </tr>
 </table>

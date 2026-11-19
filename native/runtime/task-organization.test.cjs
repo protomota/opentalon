@@ -15,7 +15,7 @@ test('companion Archive and Trash preserve task data, cancel dispatch and restor
   store.set('agentSettings', { defaultAgent: 'codex', workingFolder: directory })
   for (const status of ['To do', 'In progress', 'Done', 'Sent to agent']) {
     let { task } = await call('create_task', { boardId, title: `Keep ${status}`, notes: 'Preserve these notes', status })
-    await call('add_task_comment', { taskId: task.id, text: 'Keep this comment' })
+    await call('add_user_comment', { taskId: task.id, text: 'Keep this comment' })
     // A queued edit before Archive must not invalidate the user's later organization action.
     task = store.task(task.id)
     await call('update_task', { id: task.id, expectedRevision: task.revision, priority: 'High' })

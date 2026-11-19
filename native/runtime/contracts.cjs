@@ -121,7 +121,7 @@ const tools = [
   ]),
   tool(
     'add_task_comment',
-    'Add a task comment. Agent-authored comments do not wake the agent unless notifyAgent is explicitly true. Up to three PNG/JPEG base64 images, each under 2 MB.',
+    'Legacy alias for add_task_activity. Records an agent update in Activity, NEVER a user comment. notifyAgent is ignored. Prefer add_task_activity. Up to three PNG/JPEG screenshots under 2 MB each.',
     {
       ...write,
       taskId: id,
@@ -147,7 +147,7 @@ const tools = [
   ),
   tool(
     'report_agent_progress',
-    'Update the task attached to an active dispatched run. Use working when starting, needs-input when blocked, or failed on failure. Done REQUIRES proof (concrete checks/results, artifact paths/links or screenshot IDs, and how the definition of done was met) plus definitionOfDoneMet true. The completion report is saved as a task comment atomically before Done. A completed turn alone does not complete the task.',
+    'Update the task attached to an active dispatched run. Use working when starting, needs-input when blocked, or failed on failure. Done REQUIRES proof (concrete checks/results, artifact paths/links or screenshot IDs, and how the definition of done was met) plus definitionOfDoneMet true. The completion report is saved in Activity atomically before Done. Comments belong only to the user. A completed turn alone does not complete the task.',
     {
       ...write,
       runId: id,
@@ -321,7 +321,15 @@ const tools = [
     true
   ),
 ]
+tools.push(
+  tool('list_task_activity','Read task activity, including moves, edits, agent reports and earlier messages. Newest first; follow nextBefore with beforeSequence.',
+    {taskId:id,beforeSequence:{type:'integer',minimum:1},limit:{type:'integer',minimum:1,maximum:50}},['taskId']),
+  tool('add_task_activity','Record an agent update or work report in Activity. Never creates a user comment. Reuse requestKey on retries.',
+    {...tools.find(({name})=>name==='add_task_comment').inputSchema.properties},['taskId','text','requestKey'],true)
+)
 const local = [
+  tool('add_user_comment','Save a comment explicitly entered in the native application. Private user interface action.',
+    {...tools.find(({name})=>name==='add_task_comment').inputSchema.properties},['taskId','text','requestKey'],true),
   tool('companion_organize_task', 'Apply an explicit companion Archive, Trash or restore action.',
     { ...write, id, destination: { enum: ['archive', 'trash', 'active'] } },
     ['id', 'destination', 'requestKey'], true),

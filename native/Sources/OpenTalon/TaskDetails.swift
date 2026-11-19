@@ -171,6 +171,7 @@ struct TaskDetails: View {
                     }
                     Button("View revision history", systemImage: "clock.arrow.circlepath") { showHistory = true }
                         .disabled(dirty || saving).accessibilityIdentifier("taskHistory")
+                    TaskActivitySection(taskID: item.id)
                     TaskComments(item: item, dirty: $commentDirty)
                     Divider()
                     HStack {

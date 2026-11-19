@@ -92,7 +92,7 @@ function fixture(t, { projectApiUnavailable = false, projectPageSize = 100 } = {
     store.close()
     fs.rmSync(folder, { recursive: true, force: true })
   })
-  const write = (name, input) => store.dispatch(name, { ...input, requestKey: randomUUID() })
+  const write = (name, input) => store.dispatch(name, { ...input, requestKey: randomUUID() }, 'You · test')
   const settings = (defaultAgent, permissionMode) =>
     write('set_agent_settings', {
       defaultAgent,
@@ -193,8 +193,8 @@ test('dispatch saves the initial comment once and passes it to the chosen agent'
     code: 'INVALID_ARGUMENT',
   })
   assert.equal(f.store.comments(task.id).length, 0)
-  const sent = await f.store.dispatch('move_task', input)
-  assert.deepEqual(await f.store.dispatch('move_task', input), sent)
+  const sent = await f.store.dispatch('move_task', input, 'You · test')
+  assert.deepEqual(await f.store.dispatch('move_task', input, 'You · test'), sent)
   assert.equal(f.store.comments(task.id).length, 1)
   assert.equal(f.store.agentJobs().length, 1)
   await f.runner.tick()
@@ -238,7 +238,7 @@ test('To do, In progress and Done are manual by default; only Sent to agent opts
       ).task
       assert.equal(f.store.assignedRun(task.id), null)
     }
-    await f.write('add_task_comment', {
+    await f.write('add_user_comment', {
       taskId: task.id,
       text: 'A note for myself.',
       notifyAgent: true,
@@ -276,7 +276,7 @@ test('To do, In progress and Done are manual by default; only Sent to agent opts
   await f.runner.tick()
   assert.equal(f.launched[0].closed, true)
   assert.equal(f.store.task(task.id).status, 'In progress')
-  await f.write('add_task_comment', {
+  await f.write('add_user_comment', {
     taskId: task.id,
     text: 'Still a manual task.',
     notifyAgent: true,
@@ -476,6 +476,13 @@ test('approval requests retain their scope, concurrent prompts and declines; can
     },
   })
   assert.equal(transport.written.at(-1).response.response.behavior, 'allow')
+  for (const tool of ['list_task_activity','add_task_activity']) {
+    await transport.message({type:'control_request',request_id:tool,request:{subtype:'can_use_tool',tool_name:'mcp__opentalon__'+tool,input:{taskId:task.id,text:'Progress'}}})
+    assert.equal(transport.written.at(-1).response.response.behavior,'allow')
+  }
+  await transport.message({type:'control_request',request_id:'foreign-activity',request:{subtype:'can_use_tool',tool_name:'mcp__opentalon__add_task_activity',input:{taskId:'another-task',text:'Wrong task'}}})
+  assert.equal(f.store.agentJob(job.id).approval.id,'foreign-activity')
+  await f.runner.answer(job.id,'foreign-activity',false)
   await transport.message({
     type: 'control_request',
     request_id: 'other',
@@ -589,14 +596,14 @@ test('completion requires proof and definition of done confirmation; report is a
   const result = await f.store.dispatch('report_agent_progress', input)
   assert.deepEqual(await f.store.dispatch('report_agent_progress', input), result)
   assert.equal(f.store.task(task.id).status, 'Done')
-  assert.equal(f.store.comments(task.id).length, 1)
+  assert.equal(f.store.comments(task.id).length, 0)
   assert.match(result.completionReport.text, /Save the document and verify/)
   assert.match(result.completionReport.text, /\/test\/output.md/)
   assert.equal(result.completionReport.agent, 'codex')
-  assert.equal(result.completionReport.delivery, 'local')
-  assert.equal(f.store.task(task.id).commentCount, 1)
+  assert.equal(result.completionReport.kind, 'agent')
+  assert.equal(f.store.task(task.id).commentCount, 0)
   const backup = await f.write('create_backup', { format: 'json' })
-  assert.match((await f.store.inspect(backup.path)).comments[0].text, /Proof and verification/)
+  assert.ok((await f.store.inspect(backup.path)).activity.some(row=>row.detail.includes('Proof and verification')))
 })
 
 test('failed starts recover and explicit local completion survives late pickup', async (t) => {
@@ -637,7 +644,7 @@ test('v1 database migration preserves records and v1 JSON/SQLite backups remain 
   const sqlite = await f.write('create_backup', {})
   const db = new DatabaseSync(sqlite.path)
   db.exec(
-    'DROP TRIGGER tasks_record_completion_on_insert; DROP TRIGGER tasks_record_completion_on_move; DROP TABLE task_history; ALTER TABLE tasks DROP COLUMN issue_type; ALTER TABLE tasks DROP COLUMN plan_markdown; ALTER TABLE tasks DROP COLUMN completed_at; ALTER TABLE tasks DROP COLUMN archived_at; DROP INDEX tasks_task_key; DROP INDEX boards_project_key; ALTER TABLE tasks DROP COLUMN task_key; ALTER TABLE boards DROP COLUMN project_key; ALTER TABLE boards DROP COLUMN next_task_number; ALTER TABLE tasks DROP COLUMN due_date; ALTER TABLE tasks DROP COLUMN priority; ALTER TABLE tasks DROP COLUMN definition_of_done; DROP TABLE comment_images; DROP TABLE task_comments; DROP TABLE agent_jobs; DELETE FROM schema_migrations WHERE version>=2; PRAGMA user_version=1;'
+    'DROP TRIGGER tasks_record_completion_on_insert; DROP TRIGGER tasks_record_completion_on_move; DROP TABLE activity_images; DROP TABLE task_activity; DROP TABLE task_history; ALTER TABLE tasks DROP COLUMN issue_type; ALTER TABLE tasks DROP COLUMN plan_markdown; ALTER TABLE tasks DROP COLUMN completed_at; ALTER TABLE tasks DROP COLUMN archived_at; DROP INDEX tasks_task_key; DROP INDEX boards_project_key; ALTER TABLE tasks DROP COLUMN task_key; ALTER TABLE boards DROP COLUMN project_key; ALTER TABLE boards DROP COLUMN next_task_number; ALTER TABLE tasks DROP COLUMN due_date; ALTER TABLE tasks DROP COLUMN priority; ALTER TABLE tasks DROP COLUMN definition_of_done; DROP TABLE comment_images; DROP TABLE task_comments; DROP TABLE agent_jobs; DELETE FROM schema_migrations WHERE version>=2; PRAGMA user_version=1;'
   )
   db.close()
   assert.equal((await f.store.inspect(sqlite.path)).summary.tasks, 1)

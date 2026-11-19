@@ -13,14 +13,14 @@ test('a version-seven workspace upgrades without changing existing tasks', async
   const { task } = await store.dispatch('create_task', {
     requestKey: randomUUID(), boardId: store.boards()[0].id, title: 'Existing task', notes: 'Keep these notes', priority: 'High',
   })
-  store.db.exec('DROP TABLE task_history; ALTER TABLE tasks DROP COLUMN issue_type; ALTER TABLE tasks DROP COLUMN plan_markdown; DELETE FROM schema_migrations WHERE version>=8; PRAGMA user_version=7;')
+  store.db.exec('DROP TABLE activity_images; DROP TABLE task_activity; DROP TABLE task_history; ALTER TABLE tasks DROP COLUMN issue_type; ALTER TABLE tasks DROP COLUMN plan_markdown; DELETE FROM schema_migrations WHERE version>=8; PRAGMA user_version=7;')
   store.close()
   store = new Store(folder)
   assert.equal(store.task(task.id).planMarkdown, '')
   assert.equal(store.task(task.id).notes, 'Keep these notes')
   assert.equal(store.task(task.id).taskKey, task.taskKey)
   assert.equal(store.task(task.id).priority, 'High')
-  assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 10)
+  assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 11)
 })
 
 test('Markdown plans persist, detect document conflicts, follow project moves and survive both backup formats', async (t) => {

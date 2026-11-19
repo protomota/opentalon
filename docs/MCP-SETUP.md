@@ -69,3 +69,5 @@ Settings → Task agent supports both Claude Code and Codex. Choose a default an
 ## Current personal Codex registration
 
 At Brad’s request on November 10, Codex registered the packaged OpenTalon stdio bridge in the shared local Codex configuration. A fresh installed client read that saved entry, discovered all23tools and read the three existing boards without a model request or saved chat. This supersedes earlier statements that personal registration was unchanged. Existing app chats may need their MCP runtime refreshed to expose newly registered tools; new client sessions read the saved connection. No connection credentials belong in this repository.
+
+Agents record work in Activity with `add_task_activity`. Comments are reserved for user-entered messages. Older `add_task_comment` clients are redirected to Activity. Read both streams for context.

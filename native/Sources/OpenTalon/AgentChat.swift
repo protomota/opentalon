@@ -191,7 +191,7 @@ final class AgentChat {
         case "move_task": label = "Moved task"
         case "trash_task": label = "Moved task to Trash"
         case "restore_task": label = "Restored task"
-        case "add_task_comment": label = "Added comment"
+        case "add_task_activity", "add_task_comment": label = "Added activity"
         case "create_board": label = "Created project"
         case "rename_board": label = "Renamed project"
         case "set_board_icon": label = "Updated project icon"

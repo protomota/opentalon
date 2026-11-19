@@ -122,7 +122,7 @@ test('packaged local service copies a live WAL database and restores portable JS
   })
   const { task: discarded } = await request(old, 'create_task', { boardId, title: 'Recoverable' })
   await request(old, 'trash_task', { id: discarded.id, expectedRevision: discarded.revision })
-  await request(old, 'add_task_comment', {
+  await request(old, 'add_user_comment', {
     taskId: task.id, text: 'Screenshot', images: [{ name: 'pixel.png', mimeType: 'image/png', data: pixel }],
   })
   assert.ok(fs.existsSync(previous.file + '-wal'))

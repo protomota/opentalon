@@ -60,7 +60,7 @@ struct TaskComments: View {
             if let feedback { Text(feedback).font(.caption).foregroundStyle(palette.muted) }
         }
         .disabled(posting)
-        .task(id: item.revision) { await load() }
+        .task(id: model.workspace?.revision) { await load() }
         .onChange(of: text) { _, _ in draftChanged() }
         .onChange(of: images.map(\.id)) { _, _ in draftChanged() }
         .onChange(of: posting) { _, _ in dirty = hasDraft || posting }
@@ -158,7 +158,7 @@ struct TaskComments: View {
     private func load() async {
         do {
             let result: CommentsResponse = try await model.service.call("list_task_comments", ["taskId": item.id])
-            if !Task.isCancelled { comments = result.comments }
+            if !Task.isCancelled { comments = result.comments.filter { $0.source == "user" } }
         } catch { if !Task.isCancelled { feedback = error.localizedDescription } }
     }
 
@@ -222,7 +222,7 @@ struct TaskComments: View {
         Task {
             defer { posting = false; dirty = hasDraft }
             do {
-                try await model.mutate("add_task_comment", fields)
+                try await model.mutate("add_user_comment", fields)
                 closeComposer()
                 feedback = assigned && item.status == .working ? "Comment saved for the next agent check." : "Comment saved."
                 await load()

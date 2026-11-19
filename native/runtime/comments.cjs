@@ -48,6 +48,7 @@ function insertComment(store, taskId, text, images = [], notifyAgent = false, au
     taskId,
     JSON.stringify({
       text,
+      source: 'user',
       createdAt: new Date().toISOString(),
       delivery: notifyAgent && !task.archivedAt && store.assignedRun(taskId) ? 'pending' : 'local',
       runId: author.runId || null,
@@ -58,6 +59,7 @@ function insertComment(store, taskId, text, images = [], notifyAgent = false, au
     store.db
       .prepare('INSERT INTO comment_images VALUES (?,?,?,?,?)')
       .run(randomUUID(), id, image.name, image.mimeType, image.bytes)
+  if (store.activityReady) require('./task-activity.cjs').record(store, taskId, {actor:author.actor || 'You',kind:'comment',summary:'Added a comment'})
   return comments(store, taskId).find((comment) => comment.id === id)
 }
 function exportComments(store) {
@@ -98,6 +100,7 @@ function validateComments(records, images, tasks) {
       typeof row.text !== 'string' ||
       row.text.length > 10000 ||
       !Number.isFinite(Date.parse(row.createdAt)) ||
+      !(row.source === undefined || ['user','legacy'].includes(row.source)) ||
       !['pending', 'queued', 'delivered', 'needs-review', 'local'].includes(row.delivery) ||
       !(row.runId === null || typeof row.runId === 'string') ||
       !(row.agent === null || ['claude-code', 'codex'].includes(row.agent))
@@ -128,6 +131,7 @@ function restoreComments(store, records, images) {
       row.taskId,
       JSON.stringify({
         text: row.text,
+        source: row.source,
         createdAt: row.createdAt,
         delivery: ['pending', 'queued'].includes(row.delivery) ? 'needs-review' : row.delivery,
         runId: row.runId,

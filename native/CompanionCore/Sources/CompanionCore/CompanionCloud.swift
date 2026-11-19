@@ -192,7 +192,7 @@ public final class CompanionCloud: CompanionTransport {
         // This keeps the production CloudKit schema compatible with older clients.
         var assetURL: URL?
         defer { if let assetURL { try? FileManager.default.removeItem(at: assetURL) } }
-        if receipt.history != nil {
+        if receipt.history != nil || receipt.activity != nil {
             let url = try assetFile(receipt, limit: 32 * 1024 * 1024)
             assetURL = url
             record["payload"] = CKAsset(fileURL: url)

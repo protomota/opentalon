@@ -18,9 +18,11 @@ function record(store, task, action, origin = 'Mac / connected agent') {
   const changes = Object.keys(value).filter(key => JSON.stringify(value[key]) !== JSON.stringify(original?.[key]))
   if (!changes.length && action !== 'restore_task_revision') return
   const version = store.db.prepare('SELECT coalesce(max(version),0)+1 AS next FROM task_history WHERE task_id=?').get(task.id).next
+  const id = randomUUID(), savedAt = new Date().toISOString()
   store.db.prepare('INSERT INTO task_history VALUES (?,?,?,?,?,?,?,?)').run(
-    randomUUID(), task.id, version, new Date().toISOString(), action, origin,
+    id, task.id, version, savedAt, action, origin,
     JSON.stringify(changes), JSON.stringify(value))
+  if (store.activityReady) require('./task-activity.cjs').recordHistory(store, task.id, {id,savedAt,action,origin},value,original,changes)
 }
 
 function recordRevision(store, revision, action, origin) {

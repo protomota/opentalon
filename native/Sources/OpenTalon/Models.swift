@@ -172,6 +172,7 @@ struct DraftImage: Decodable, Identifiable {
 }
 
 struct WorkComment: Decodable, Identifiable {
+    var source: String?
     let id: String
     let text: String
     let createdAt: String

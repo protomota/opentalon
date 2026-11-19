@@ -44,7 +44,7 @@ function fixture(t) {
     return job
   }
   const comment = (task, text = 'Please update this.', images = []) =>
-    write('add_task_comment', { taskId: task.id, text, images, notifyAgent: true }).then(
+    write('add_user_comment', { taskId: task.id, text, images, notifyAgent: true }).then(
       (result) => result.comment
     )
   return { store, write, task, previous, comment, folder, cleanup }
@@ -142,8 +142,8 @@ test('comments are idempotent, defer busy tasks, hold completion for unread feed
     notifyAgent: true,
     requestKey: randomUUID(),
   }
-  const saved = await f.store.dispatch('add_task_comment', args)
-  assert.deepEqual(await f.store.dispatch('add_task_comment', args), saved)
+  const saved = await f.store.dispatch('add_user_comment', args)
+  assert.deepEqual(await f.store.dispatch('add_user_comment', args), saved)
   assert.equal(f.store.comments(task.id).length, 1)
   assert.equal((await f.store.queueCommentFollowups()).queued, 0)
   await f.write('report_agent_progress', {
@@ -162,8 +162,8 @@ test('comments are idempotent, defer busy tasks, hold completion for unread feed
   assert.equal(f.store.comments(task.id)[0].delivery, 'needs-review')
   await f.write('retry_task_comment', { id: saved.comment.id })
   assert.equal((await f.store.queueCommentFollowups()).queued, 1)
-  const agentNote = await f.write('add_task_comment', { taskId: task.id, text: 'Agent note' })
-  assert.equal(agentNote.comment.delivery, 'local')
+  const agentNote = await f.write('add_task_activity', { taskId: task.id, text: 'Agent note' })
+  assert.equal(agentNote.activity.kind, 'agent')
   assert.equal(f.store.commentImage(saved.comment.images[0].id).data, image.data)
   await assert.rejects(f.comment(task, '', []), { code: 'EMPTY_COMMENT' })
   await assert.rejects(
@@ -175,7 +175,7 @@ test('comments are idempotent, defer busy tasks, hold completion for unread feed
   await assert.rejects(f.comment(task, 'Too many', [image, image, image, image]), {
     code: 'INVALID_ARGUMENT',
   })
-  assert.equal(f.store.comments(task.id).length, 3, 'User note, completion report and agent note')
+  assert.equal(f.store.comments(task.id).length, 1, 'Only the user note belongs in Comments')
 })
 test('comments and screenshot bytes round-trip in JSON and SQLite; restored feedback is paused and legacy v2 imports', async (t) => {
   const f = fixture(t),

@@ -70,6 +70,7 @@ final class PhoneWorkspace {
         var unsavedNotes: [String: UnsavedNotes]?
         var planDrafts: [String: String]?
         var historyPages: [String: TaskHistoryPage]?
+        var activityPages: [String: TaskActivityPage]?
         var capturedTask: CapturedTask?
     }
 
@@ -289,6 +290,7 @@ final class PhoneWorkspace {
                     updated.commentDrafts = nil
                     updated.unsavedNotes = nil
                     updated.historyPages = nil
+                    updated.activityPages = nil
                     updated.capturedTask = nil
                 }
                 if updated.snapshot == nil, let legacy = load(directory.appending(path: "workspace.json")),
@@ -315,6 +317,15 @@ final class PhoneWorkspace {
                 guard let receipt else { continue }
                 var updated = state
                 if receipt.isSettled(at: snapshot.revision) {
+                    if let page = receipt.activity, receipt.outcome == .applied {
+                        updated.activityPages = updated.activityPages ?? [:]
+                        let cached = updated.activityPages?[page.taskID]
+                        let base = updated.snapshot?.activityByTask?[page.taskID]
+                        if case .loadActivity(_, let before) = request.action, before != nil {
+                            let current: TaskActivityPage? = if let base { cached.map { base.keepingOlder(from: $0) } ?? base } else { cached }
+                            updated.activityPages?[page.taskID] = current?.merging(page) ?? page
+                        } else { updated.activityPages?[page.taskID] = cached.map { page.keepingOlder(from: $0) } ?? page }
+                    }
                     if let page = receipt.history, receipt.outcome == .applied {
                         updated.historyPages = updated.historyPages ?? [:]
                         if let existing = updated.historyPages?[page.taskID] {
@@ -484,6 +495,20 @@ final class PhoneWorkspace {
         return nil
     }
 
+    func activityPage(for taskID: String) -> TaskActivityPage? {
+        let base = snapshot?.activityByTask?[taskID]
+        guard let cached = state.activityPages?[taskID] else { return base }
+        return base?.keepingOlder(from: cached) ?? cached
+    }
+    func isLoadingActivity(for taskID: String) -> Bool {
+        pending.contains { if case .loadActivity(let id, _) = $0.action { return id == taskID }; return false }
+    }
+    func loadActivity(for taskID: String, before: Int?) throws {
+        guard snapshot?.activityByTask != nil else { throw CompanionSyncError.missingWorkspace }
+        guard !pending.contains(where: { if case .loadActivity(let id, let cursor) = $0.action { return id == taskID && cursor == before }; return false }) else { return }
+        try queue(.loadActivity(taskID: taskID, beforeSequence: before))
+    }
+
     func historyPage(for taskID: String) -> TaskHistoryPage? {
         let base = snapshot?.historyByTask?[taskID]
         guard let cached = state.historyPages?[taskID] else { return base }
@@ -630,6 +655,7 @@ final class PhoneWorkspace {
 
     func title(for request: PhoneRequest) -> String {
         switch request.action {
+        case .loadActivity: "Load task activity"
         case .loadHistory: "Load task history"
         case .restoreRevision: "Restore task revision"
         case .createProject(let name): name

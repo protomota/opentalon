@@ -18,6 +18,7 @@ final class PhoneCompanion {
         let agentModels: [AgentModelChoice]
         let commentsByTask: [String: [PhoneComment]]
         let historyByTask: [String: TaskHistoryPage]
+        let activityByTask: [String: TaskActivityPage]
     }
 
     private struct MutationRevision: Decodable {
@@ -143,13 +144,22 @@ final class PhoneCompanion {
                                                        title: $0.title, revision: $0.revision) },
                              captureProjectID: workspace.selectedBoard, macName: Host.current().localizedName ?? "Mac",
                              supportsTaskOverrides: true, supportsBulkArchive: true, supportsTaskReordering: true,
-                             supportsTaskOrganization: true, supportsTaskPlans: true, supportsTaskTypes: true, historyByTask: snapshot.historyByTask)
+                             supportsTaskOrganization: true, supportsTaskPlans: true, supportsTaskTypes: true, historyByTask: snapshot.historyByTask, activityByTask: snapshot.activityByTask)
     }
 
     private func apply(_ request: PhoneRequest, service: Service) async throws -> PhoneReceipt {
         let action: String
         var input: [String: Any] = ["requestKey": "phone:" + request.id.uuidString]
         switch request.action {
+        case .loadActivity(let id, let before):
+            var fields: [String: Any] = ["taskId": id, "limit": 20]
+            fields["beforeSequence"] = before
+            do {
+                let page: TaskActivityPage = try await service.call("list_task_activity", fields)
+                return PhoneReceipt(requestID: request.id, outcome: .applied, revision: page.revision, activity: page)
+            } catch let failure as ServiceFailure where failure.code == "NOT_FOUND" {
+                return PhoneReceipt(requestID: request.id, outcome: .rejected, message: failure.message)
+            }
         case .loadHistory(let id, let before):
             var fields: [String: Any] = ["id": id, "limit": 20]
             fields["beforeVersion"] = before
@@ -192,7 +202,7 @@ final class PhoneCompanion {
             input["model"] = model
             input["dispatchComment"] = dispatchComment
         case .comment(let id, let text):
-            action = "add_task_comment"
+            action = "add_user_comment"
             input["taskId"] = id
             input["text"] = text
             input["notifyAgent"] = true

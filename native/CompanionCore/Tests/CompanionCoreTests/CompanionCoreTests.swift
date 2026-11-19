@@ -338,3 +338,27 @@ import Testing
     #expect(page.merging(ended).nextBefore == nil)
     #expect(page.merging(page).entries.count == 1)
 }
+
+@Test func activityPagesRoundTripKeepContinuousHistoryAndDiscardGaps() throws {
+    func entry(_ n: Int, kind: String = "change") -> TaskActivityEntry {
+        TaskActivityEntry(id: String(n), sequence: n, createdAt: "2026-11-19T15:00:00Z", actor: "You", kind: kind, summary: "Changed task", detail: "To do → In progress", images: [])
+    }
+    let older = TaskActivityPage(taskID: "task", revision: 9, entries: (1...5).reversed().map { entry($0) }, nextBefore: nil)
+    let current = TaskActivityPage(taskID: "task", revision: 10, entries: (5...9).reversed().map { entry($0) }, nextBefore: 5)
+    let merged = current.keepingOlder(from: older)
+    #expect(merged.entries.map(\.sequence) == Array((1...9).reversed()))
+    #expect(merged.nextBefore == nil)
+    let gap = TaskActivityPage(taskID: "task", revision: 20, entries: [entry(20), entry(19)], nextBefore: 19)
+    #expect(gap.keepingOlder(from: merged) == gap)
+    let restored = TaskActivityPage(taskID: "task", revision: 11, entries: [entry(10, kind: "restore"), entry(9)], nextBefore: 9)
+    #expect(restored.keepingOlder(from: merged) == restored)
+    let request = PhoneRequest(workspaceID: UUID(), action: .loadActivity(taskID: "task", beforeSequence: 5))
+    #expect(!request.changesTask)
+    #expect(try JSONDecoder().decode(PhoneRequest.self, from: JSONEncoder().encode(request)).taskID == "task")
+    let receipt = PhoneReceipt(requestID: request.id, outcome: .applied, revision: 10, activity: merged)
+    #expect(try JSONDecoder().decode(PhoneReceipt.self, from: JSONEncoder().encode(receipt)).activity == merged)
+    let old = PhoneSnapshot(workspaceID: request.workspaceID, revision: 10, projects: [], tasks: [])
+    let updated = PhoneSnapshot(workspaceID: request.workspaceID, revision: 10, projects: [], tasks: [], activityByTask: ["task": current])
+    #expect(updated.shouldReplace(old))
+    #expect(try JSONDecoder().decode(PhoneSnapshot.self, from: JSONEncoder().encode(old)).activityByTask == nil)
+}

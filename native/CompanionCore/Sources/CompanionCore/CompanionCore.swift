@@ -182,6 +182,7 @@ public struct PhoneSnapshot: Codable, Sendable {
     private let taskPlans: Bool?
     private let taskTypes: Bool?
     public let historyByTask: [String: TaskHistoryPage]?
+    public let activityByTask: [String: TaskActivityPage]?
 
     public init(workspaceID: UUID, revision: Int, updatedAt: Date = .now,
                 projects: [PhoneProject], tasks: [PhoneTask], defaultAgent: PhoneAgent? = nil,
@@ -192,7 +193,7 @@ public struct PhoneSnapshot: Codable, Sendable {
                 captureProjectID: String? = nil, macName: String? = nil,
                 supportsTaskOverrides: Bool = false, supportsBulkArchive: Bool = false,
                 supportsTaskReordering: Bool = false, supportsTaskOrganization: Bool = false,
-                supportsTaskPlans: Bool = false, supportsTaskTypes: Bool = false, historyByTask: [String: TaskHistoryPage]? = nil) {
+                supportsTaskPlans: Bool = false, supportsTaskTypes: Bool = false, historyByTask: [String: TaskHistoryPage]? = nil, activityByTask: [String: TaskActivityPage]? = nil) {
         version = 1
         self.workspaceID = workspaceID
         self.revision = revision
@@ -217,6 +218,7 @@ public struct PhoneSnapshot: Codable, Sendable {
         taskPlans = supportsTaskPlans ? true : nil
         taskTypes = supportsTaskTypes ? true : nil
         self.historyByTask = historyByTask
+        self.activityByTask = activityByTask
     }
 
     public var supportsNoteEditing: Bool { noteEditing == true }
@@ -231,6 +233,7 @@ public struct PhoneSnapshot: Codable, Sendable {
     public var supportsTaskTypes: Bool { taskTypes == true }
 
     var projectionVersion: Int {
+        if activityByTask != nil { return 18 }
         if historyByTask != nil { return 17 }
         if supportsTaskTypes { return 16 }
         if supportsTaskPlans { return 15 }
@@ -313,6 +316,7 @@ public struct PhoneRequest: Codable, Identifiable, Sendable {
     public enum TaskDestination: String, Codable, Sendable { case archive, trash, active }
 
     public enum Action: Codable, Sendable {
+        case loadActivity(taskID: String, beforeSequence: Int?)
         case loadHistory(taskID: String, beforeVersion: Int?)
         case restoreRevision(taskID: String, historyID: String, revision: Int)
         case createProject(name: String)
@@ -353,7 +357,7 @@ public struct PhoneRequest: Codable, Identifiable, Sendable {
         case .send(let id, _, _), .complete(let id, _), .comment(let id, _),
              .editNotes(let id, _, _), .editField(let id, _, _), .setField(let id, _, _), .forceComplete(let id),
              .removeArchived(let id, _, _), .restoreTrashed(let id, _), .reorderTask(let id, _, _, _, _),
-             .organizeTask(let id, _), .savePlan(let id, _, _), .loadHistory(let id, _), .restoreRevision(let id, _, _): id
+             .organizeTask(let id, _), .savePlan(let id, _, _), .loadHistory(let id, _), .restoreRevision(let id, _, _), .loadActivity(let id, _): id
         }
     }
 
@@ -361,7 +365,7 @@ public struct PhoneRequest: Codable, Identifiable, Sendable {
         switch action {
         case .send, .complete, .editNotes, .editField, .setField, .forceComplete, .removeArchived, .restoreTrashed,
              .organizeTask, .savePlan, .restoreRevision: true
-        case .create, .createProject, .comment, .emptyTrash, .manageArchive, .reorderTask, .loadHistory: false
+        case .create, .createProject, .comment, .emptyTrash, .manageArchive, .reorderTask, .loadHistory, .loadActivity: false
         }
     }
 }
@@ -374,15 +378,17 @@ public struct PhoneReceipt: Codable, Equatable, Sendable {
     public let message: String?
     public let createdTaskID: String?
     public let history: TaskHistoryPage?
+    public let activity: TaskActivityPage?
 
     public init(requestID: UUID, outcome: Outcome, revision: Int? = nil, message: String? = nil,
-                createdTaskID: String? = nil, history: TaskHistoryPage? = nil) {
+                createdTaskID: String? = nil, history: TaskHistoryPage? = nil, activity: TaskActivityPage? = nil) {
         self.requestID = requestID
         self.outcome = outcome
         self.revision = revision
         self.message = message
         self.createdTaskID = createdTaskID
         self.history = history
+        self.activity = activity
     }
 
     public func isSettled(at snapshotRevision: Int) -> Bool {

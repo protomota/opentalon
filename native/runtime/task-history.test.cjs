@@ -83,7 +83,7 @@ test('restoring an agent revision stops dispatch, retains comments, reopens Arch
   const original = (await store.dispatch('get_task_history', { id: task.id })).entries[0]
   const { board } = await write('create_board', { name: 'Destination' })
   await write('move_task', { id: task.id, boardId: board.id, expectedRevision: task.revision, status: 'In progress' })
-  await write('add_task_comment', { taskId: task.id, text: 'Keep this feedback' })
+  await write('add_user_comment', { taskId: task.id, text: 'Keep this feedback' })
   await write('companion_organize_task', { id: task.id, destination: 'archive' })
   await write('restore_task_revision', { id: task.id, historyID: original.id, expectedRevision: store.task(task.id).revision })
   assert.equal(store.task(task.id).boardId, boardId)

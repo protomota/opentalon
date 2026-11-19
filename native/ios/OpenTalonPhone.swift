@@ -2332,6 +2332,7 @@ private struct TaskView: View {
     }
     @State private var planEdit: PlanEdit?
     @State private var showHistory = false
+    @State private var showActivity = false
     @Environment(\.dismiss) private var dismiss
     @State private var confirmTrash = false
     @State private var confirmArchive = false
@@ -2398,6 +2399,11 @@ private struct TaskView: View {
                     Section("Definition of done") { Text(workspace.displayedText(for: task, field: .definitionOfDone)).textSelection(.enabled) }
                         .listRowBackground(colors.card)
                 }
+                Section("Activity") {
+                    if let page = workspace.activityPage(for: taskID) {
+                        TaskActivitySummary(page: page, colors: colors) { showActivity = true }
+                    } else { Text("Update OpenTalon on your Mac to separate Activity from your comments.").font(.caption).foregroundStyle(colors.muted) }
+                }.listRowBackground(colors.card)
                 Section("History") {
                     Button { showHistory = true } label: {
                         PhoneActionLabel(title: "View revision history", systemImage: "clock.arrow.circlepath")
@@ -2511,6 +2517,12 @@ private struct TaskView: View {
             }
             .sheet(item: $notesEdit) { edit in
                 NotesEditor(edit: edit)
+            }
+            .sheet(isPresented: $showActivity) {
+                TaskActivityView(page: workspace.activityPage(for: taskID), colors: colors,
+                                 waitingForMac: workspace.isLoadingActivity(for: taskID)) { before in
+                    try workspace.loadActivity(for: taskID, before: before)
+                }
             }
             .sheet(isPresented: $showHistory) {
                 if let task = workspace.snapshot?.tasks.first(where: { $0.id == taskID }) {
@@ -2852,7 +2864,7 @@ private struct TaskView: View {
     }
 
     private func comments(for task: PhoneTask) -> some View {
-        Section("Comments") {
+        Section(workspace.snapshot?.activityByTask == nil ? "Earlier messages" : "Comments") {
             if let commentsByTask = workspace.snapshot?.commentsByTask {
                 ForEach(commentsByTask[task.id] ?? []) { entry in
                     VStack(alignment: .leading, spacing: 4) {
@@ -3220,6 +3232,7 @@ private struct QueueView: View {
     private func kind(_ request: PhoneRequest) -> String {
         switch request.action {
         case .createProject: "Create project"
+        case .loadActivity: "Load task activity"
         case .loadHistory: "Load task history"
         case .restoreRevision: "Restore task revision"
         case .savePlan: "Save plan"

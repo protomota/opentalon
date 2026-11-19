@@ -362,3 +362,26 @@ import Testing
     #expect(updated.shouldReplace(old))
     #expect(try JSONDecoder().decode(PhoneSnapshot.self, from: JSONEncoder().encode(old)).activityByTask == nil)
 }
+
+@Test func commentsHideUnknownLegacyAuthorsAndDoNotTreatPickupAsActedOn() throws {
+    let old = try JSONDecoder().decode(PhoneComment.self, from: Data(#"{"id":"legacy","text":"Agent report","createdAt":"2026-11-19T12:00:00Z","delivery":"delivered","pickedUpAt":"2026-11-19T12:01:00Z"}"#.utf8))
+    #expect(!old.isUserComment(hasSeparatedActivity: false))
+    #expect(old.isUserComment(hasSeparatedActivity: true)) // v18 Mac already filtered this stream.
+    #expect(!old.wasActedOn)
+    let user = PhoneComment(id: "user", text: "Change the date", createdAt: "2026-11-19T12:00:00Z", source: "user", actedOnAt: "2026-11-19T12:02:00Z", activityID: "report")
+    #expect(user.isUserComment(hasSeparatedActivity: false))
+    #expect(user.wasActedOn)
+    let legacy = PhoneComment(id: "other", text: "Earlier message", createdAt: "2026-11-19T12:00:00Z", source: "legacy")
+    #expect(!legacy.isUserComment(hasSeparatedActivity: true))
+    let workspace = UUID()
+    let previous = PhoneSnapshot(workspaceID: workspace, revision: 8, projects: [], tasks: [], activityByTask: [:])
+    let current = PhoneSnapshot(workspaceID: workspace, revision: 8, projects: [], tasks: [], activityByTask: [:], supportsCommentActivity: true)
+    #expect(current.shouldReplace(previous))
+    let request = PhoneRequest(workspaceID: workspace, action: .loadCommentActivity(taskID: "task", commentID: "user", beforeSequence: nil))
+    #expect(!request.changesTask)
+    #expect(try JSONDecoder().decode(PhoneRequest.self, from: JSONEncoder().encode(request)).taskID == "task")
+    let taskPage = TaskActivityPage(taskID: "task", revision: 8, entries: [], nextBefore: nil)
+    let commentPage = TaskActivityPage(taskID: "task", revision: 8, entries: [], nextBefore: nil, commentID: "user")
+    #expect(taskPage.merging(commentPage) == taskPage)
+    #expect(try JSONDecoder().decode(TaskActivityPage.self, from: JSONEncoder().encode(commentPage)).commentID == "user")
+}

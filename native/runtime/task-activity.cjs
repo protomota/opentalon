@@ -57,16 +57,30 @@ function entry(store, row) {
   }
 }
 
-function page(store, id, beforeSequence, limit = 20) {
+function page(store, id, beforeSequence, limit = 20, commentID) {
   const task = store.task(id)
+  let filter = '',
+    parameters = []
+  if (commentID) {
+    const comment = store
+      .comments(task.id)
+      .find((item) => item.id === commentID && item.source === 'user')
+    if (!comment) throw new AppError('NOT_FOUND', 'This user comment is no longer available.')
+    // Only the comment's own assigned run and explicit responses belong in this drill-down.
+    filter = " AND (json_extract(data,'$.commentID')=? OR json_extract(data,'$.runId')=? OR id=?)"
+    parameters = [commentID, comment.runId || '', comment.activityID || '']
+  }
   const rows = store.db
     .prepare(
-      'SELECT * FROM task_activity WHERE task_id=? AND sequence<? ORDER BY sequence DESC LIMIT ?'
+      'SELECT * FROM task_activity WHERE task_id=? AND sequence<?' +
+        filter +
+        ' ORDER BY sequence DESC LIMIT ?'
     )
-    .all(task.id, beforeSequence ?? Number.MAX_SAFE_INTEGER, limit + 1)
+    .all(task.id, beforeSequence ?? Number.MAX_SAFE_INTEGER, ...parameters, limit + 1)
   return {
     taskID: task.id,
     revision: store.revision(),
+    ...(commentID ? { commentID } : {}),
     entries: rows.slice(0, limit).map((row) => entry(store, row)),
     nextBefore: rows.length > limit ? rows[limit - 1].sequence : null
   }
@@ -125,7 +139,7 @@ function recordHistory(store, taskId, row, value, previous, changes) {
     kind: 'change',
     summary,
     detail: details,
-    data: { historyID: row.id }
+    data: {historyID: row.id, ...(row.runId ? {runId:row.runId} : {})}
   })
 }
 
@@ -274,10 +288,12 @@ function validateRows(rows, images, tasks, comments) {
       typeof data !== 'object' ||
       Object.entries(data).some(
         ([key, value]) =>
-          !['agent', 'runId', 'historyID'].includes(key) || !(value === null || text(value, 200))
+          !['agent', 'runId', 'historyID', 'commentID'].includes(key) ||
+          !(value === null || text(value, 200))
       )
     )
       bad()
+    if (data.commentID != null && commentIDs.get(data.commentID) !== row.task_id) bad()
     ids.add(row.id)
     sequences.add(row.sequence)
   }

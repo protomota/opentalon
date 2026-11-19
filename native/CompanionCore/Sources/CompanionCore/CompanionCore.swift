@@ -44,6 +44,20 @@ public struct PhoneComment: Codable, Identifiable, Sendable {
     public let createdAt: String
     public let delivery: String?
     public let pickedUpAt: String?
+    public let source: String?
+    public let actedOnAt: String?
+    public let activityID: String?
+    public let activityState: String?
+
+    public init(id: String, text: String, createdAt: String, delivery: String? = nil, pickedUpAt: String? = nil,
+                source: String? = nil, actedOnAt: String? = nil, activityID: String? = nil, activityState: String? = nil) {
+        self.id=id; self.text=text; self.createdAt=createdAt; self.delivery=delivery; self.pickedUpAt=pickedUpAt
+        self.source=source; self.actedOnAt=actedOnAt; self.activityID=activityID; self.activityState=activityState
+    }
+    public func isUserComment(hasSeparatedActivity: Bool) -> Bool {
+        source == "user" || (source == nil && hasSeparatedActivity)
+    }
+    public var wasActedOn: Bool { actedOnAt != nil && activityID != nil }
 }
 
 public struct PhoneAgentPickup: Codable, Equatable, Identifiable, Sendable {
@@ -181,6 +195,7 @@ public struct PhoneSnapshot: Codable, Sendable {
     private let taskOrganization: Bool?
     private let taskPlans: Bool?
     private let taskTypes: Bool?
+    private let commentActivity: Bool?
     public let historyByTask: [String: TaskHistoryPage]?
     public let activityByTask: [String: TaskActivityPage]?
 
@@ -193,7 +208,7 @@ public struct PhoneSnapshot: Codable, Sendable {
                 captureProjectID: String? = nil, macName: String? = nil,
                 supportsTaskOverrides: Bool = false, supportsBulkArchive: Bool = false,
                 supportsTaskReordering: Bool = false, supportsTaskOrganization: Bool = false,
-                supportsTaskPlans: Bool = false, supportsTaskTypes: Bool = false, historyByTask: [String: TaskHistoryPage]? = nil, activityByTask: [String: TaskActivityPage]? = nil) {
+                supportsTaskPlans: Bool = false, supportsTaskTypes: Bool = false, historyByTask: [String: TaskHistoryPage]? = nil, activityByTask: [String: TaskActivityPage]? = nil, supportsCommentActivity: Bool = false) {
         version = 1
         self.workspaceID = workspaceID
         self.revision = revision
@@ -219,6 +234,7 @@ public struct PhoneSnapshot: Codable, Sendable {
         taskTypes = supportsTaskTypes ? true : nil
         self.historyByTask = historyByTask
         self.activityByTask = activityByTask
+        commentActivity = supportsCommentActivity ? true : nil
     }
 
     public var supportsNoteEditing: Bool { noteEditing == true }
@@ -230,9 +246,11 @@ public struct PhoneSnapshot: Codable, Sendable {
     public var supportsTaskReordering: Bool { taskReordering == true }
     public var supportsTaskOrganization: Bool { taskOrganization == true }
     public var supportsTaskPlans: Bool { taskPlans == true }
+    public var supportsCommentActivity: Bool { commentActivity == true }
     public var supportsTaskTypes: Bool { taskTypes == true }
 
     var projectionVersion: Int {
+        if supportsCommentActivity { return 19 }
         if activityByTask != nil { return 18 }
         if historyByTask != nil { return 17 }
         if supportsTaskTypes { return 16 }
@@ -317,6 +335,7 @@ public struct PhoneRequest: Codable, Identifiable, Sendable {
 
     public enum Action: Codable, Sendable {
         case loadActivity(taskID: String, beforeSequence: Int?)
+        case loadCommentActivity(taskID: String, commentID: String, beforeSequence: Int?)
         case loadHistory(taskID: String, beforeVersion: Int?)
         case restoreRevision(taskID: String, historyID: String, revision: Int)
         case createProject(name: String)
@@ -357,7 +376,7 @@ public struct PhoneRequest: Codable, Identifiable, Sendable {
         case .send(let id, _, _), .complete(let id, _), .comment(let id, _),
              .editNotes(let id, _, _), .editField(let id, _, _), .setField(let id, _, _), .forceComplete(let id),
              .removeArchived(let id, _, _), .restoreTrashed(let id, _), .reorderTask(let id, _, _, _, _),
-             .organizeTask(let id, _), .savePlan(let id, _, _), .loadHistory(let id, _), .restoreRevision(let id, _, _), .loadActivity(let id, _): id
+             .organizeTask(let id, _), .savePlan(let id, _, _), .loadHistory(let id, _), .restoreRevision(let id, _, _), .loadActivity(let id, _), .loadCommentActivity(let id, _, _): id
         }
     }
 
@@ -365,7 +384,7 @@ public struct PhoneRequest: Codable, Identifiable, Sendable {
         switch action {
         case .send, .complete, .editNotes, .editField, .setField, .forceComplete, .removeArchived, .restoreTrashed,
              .organizeTask, .savePlan, .restoreRevision: true
-        case .create, .createProject, .comment, .emptyTrash, .manageArchive, .reorderTask, .loadHistory, .loadActivity: false
+        case .create, .createProject, .comment, .emptyTrash, .manageArchive, .reorderTask, .loadHistory, .loadActivity, .loadCommentActivity: false
         }
     }
 }

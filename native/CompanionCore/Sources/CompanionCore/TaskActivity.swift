@@ -35,16 +35,17 @@ public struct TaskActivityPage: Codable, Equatable, Sendable {
     public let revision: Int
     public let entries: [TaskActivityEntry]
     public let nextBefore: Int?
+    public var commentID: String? = nil
 
     public func merging(_ older: Self) -> Self {
-        guard taskID == older.taskID else { return self }
+        guard taskID == older.taskID, commentID == older.commentID else { return self }
         let values = Dictionary((entries + older.entries).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return Self(taskID: taskID, revision: max(revision, older.revision),
-                    entries: values.values.sorted { $0.sequence > $1.sequence }, nextBefore: older.nextBefore)
+                    entries: values.values.sorted { $0.sequence > $1.sequence }, nextBefore: older.nextBefore, commentID: commentID)
     }
 
     public func keepingOlder(from cached: Self) -> Self {
-        guard taskID == cached.taskID, nextBefore != nil else { return self }
+        guard taskID == cached.taskID, commentID == cached.commentID, nextBefore != nil else { return self }
         let known = Set(cached.entries.map(\.id))
         if entries.contains(where: { $0.kind == "restore" && !known.contains($0.id) }) { return self }
         guard entries.contains(where: { known.contains($0.id) }) ||
@@ -61,21 +62,9 @@ public struct TaskActivitySummary: View {
         self.page = page; self.colors = colors; self.open = open
     }
     public var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if page.entries.isEmpty { Text("No activity yet.").foregroundStyle(colors.muted) }
-            ForEach(Array(page.entries.prefix(3))) { entry in
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: entry.symbol).foregroundStyle(colors.actionAccent).frame(width: 20)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(entry.summary).font(.callout.weight(.medium))
-                        Text(entry.actor + " · " + entry.dateLabel).font(.caption).foregroundStyle(colors.muted)
-                    }
-                }
-            }
-            Button("View all activity", systemImage: "clock.arrow.circlepath", action: open)
-                .buttonStyle(ActivityPillStyle(colors: colors))
-                .accessibilityIdentifier("taskActivity")
-        }
+        Button("View activity", systemImage: "clock.arrow.circlepath", action: open)
+            .buttonStyle(ActivityPillStyle(colors: colors))
+            .accessibilityIdentifier("taskActivity")
     }
 }
 
@@ -84,28 +73,29 @@ public struct TaskActivityView: View {
     @State private var expanded = Set<String>()
     @State private var failure: String?
     @State private var loading = false
+    let commentID: String?
     let page: TaskActivityPage?
     let colors: OpenTalonColors
     let waitingForMac: Bool
     let load: @MainActor (Int?) async throws -> Void
     let openImage: ((TaskActivityImage) -> Void)?
 
-    public init(page: TaskActivityPage?, colors: OpenTalonColors, waitingForMac: Bool = false,
+    public init(page: TaskActivityPage?, colors: OpenTalonColors, waitingForMac: Bool = false, commentID: String? = nil,
                 load: @escaping @MainActor (Int?) async throws -> Void,
                 openImage: ((TaskActivityImage) -> Void)? = nil) {
-        self.page = page; self.colors = colors; self.waitingForMac = waitingForMac
+        self.page = page; self.colors = colors; self.waitingForMac = waitingForMac; self.commentID = commentID
         self.load = load; self.openImage = openImage
     }
     public var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Activity").font(.headline)
+                Text(commentID == nil ? "Activity" : "Comment activity").font(.headline)
                 Spacer()
                 Button("Close") { dismiss() }.accessibilityIdentifier("activityClose")
             }.padding(20)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
-                    Text("Task changes and agent updates. Your messages stay in Comments.")
+                    Text(commentID == nil ? "Task changes and agent updates." : "The agent’s response and recorded changes for your comment.")
                         .font(.callout).foregroundStyle(colors.muted)
                     if let failure { Text(failure).foregroundStyle(colors.danger) }
                     if waitingForMac {
@@ -126,6 +116,9 @@ public struct TaskActivityView: View {
         .foregroundStyle(colors.text).background(colors.canvas)
         .buttonStyle(ActivityPillStyle(colors: colors)).tint(colors.actionAccent)
         .task { fetch(nil) }
+        .task(id: page?.entries.first?.id) {
+            if commentID != nil, let report = page?.entries.first(where: { $0.kind == "agent" }) { expanded.insert(report.id) }
+        }
     }
     private func activityRow(_ entry: TaskActivityEntry) -> some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -137,6 +130,11 @@ public struct TaskActivityView: View {
                 }
             }
             if !entry.detail.isEmpty {
+                if commentID != nil && entry.kind == "change" {
+                    Text("Changes").font(.caption.weight(.semibold)).foregroundStyle(colors.muted)
+                    Text(entry.detail).font(.callout).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
                 DisclosureGroup("Details", isExpanded: Binding(get: { expanded.contains(entry.id) }, set: { value in
                     if value { expanded.insert(entry.id) } else { expanded.remove(entry.id) }
                 })) {
@@ -145,6 +143,7 @@ public struct TaskActivityView: View {
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8)
                 }
                 .accessibilityIdentifier("activityDetails-" + entry.id)
+                }
             }
             ForEach(entry.images) { image in
                 if let openImage {
@@ -172,5 +171,42 @@ private struct ActivityPillStyle: ButtonStyle {
             .padding(.horizontal, 16).padding(.vertical, 10)
             .background(colors.card.opacity(configuration.isPressed ? 0.65 : 1), in: Capsule())
             .overlay { Capsule().strokeBorder(colors.line, lineWidth: 1) }
+    }
+}
+
+public struct EarlierTaskActivityView: View {
+    @Environment(\.dismiss) private var dismiss
+    let comments: [PhoneComment]
+    let colors: OpenTalonColors
+    public init(comments: [PhoneComment], colors: OpenTalonColors) { self.comments=comments; self.colors=colors }
+    public var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Earlier activity").font(.headline)
+                Spacer()
+                Button("Close") { dismiss() }.accessibilityIdentifier("earlierActivityClose")
+            }.padding(20)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    Text("Messages from an older Mac are kept here. Update OpenTalon on your Mac to link new agent responses to your comments.")
+                        .font(.callout).foregroundStyle(colors.muted)
+                    ForEach(comments.reversed()) { entry in
+                        DisclosureGroup {
+                            Text(entry.text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                .padding(.top, 8)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Earlier message").font(.headline)
+                                Text(TaskCreationOrder.date(from: entry.createdAt)?.formatted(date: .abbreviated, time: .shortened) ?? entry.createdAt)
+                                    .font(.caption).foregroundStyle(colors.muted)
+                            }
+                        }
+                        .padding(16).background(colors.card, in: RoundedRectangle(cornerRadius: 18))
+                    }
+                }.padding(20)
+            }
+        }
+        .background(colors.canvas).foregroundStyle(colors.text).tint(colors.actionAccent)
+        .buttonStyle(ActivityPillStyle(colors: colors))
     }
 }

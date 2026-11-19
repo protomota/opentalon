@@ -585,7 +585,7 @@ class Store {
           this.setCommentDelivery(id, 'needs-review')
         if (patch.state === 'canceled')
           this.markPendingCommentsForReview(job.taskId)
-        taskHistory.recordRevision(this, revision, 'agent_update', 'Agent')
+        taskHistory.recordRevision(this, revision, 'agent_update', 'Agent', id)
         this.set('revision', revision)
         this.db.exec('COMMIT')
         this.changed(revision)
@@ -978,13 +978,13 @@ class Store {
       }
     if (name === 'list_boards') return { boards: this.boards(), revision: this.revision() }
     if (name === 'get_task') return { task: this.task(a.id) }
-    if (name === 'list_task_activity') return taskActivity.page(this, a.taskId, a.beforeSequence, a.limit)
+    if (name === 'list_task_activity') return taskActivity.page(this, a.taskId, a.beforeSequence, a.limit, a.commentId)
     if (name === 'get_task_history') return taskHistory.page(this, a.id, a.beforeVersion, a.limit)
     if (name === 'list_tasks' || name === 'list_trash') return this.list(a, name === 'list_trash')
     if (name === 'get_preferences') return this.preferences()
     if (name === 'list_task_comments') {
       this.task(a.taskId)
-      return { comments: this.comments(a.taskId), revision: this.revision() }
+      return { comments: this.comments(a.taskId).filter(comment => comment.source === 'user'), revision: this.revision() }
     }
     if (name === 'read_comment_image') return this.commentImage(a.imageId)
     if (name === 'get_agent_settings') return this.agentSettings()
@@ -1118,7 +1118,11 @@ class Store {
         const task = this.task(a.taskId)
         if(task.deleted) throw new AppError('IN_TRASH','Restore the task before adding activity.')
         if(!a.text.trim() && !a.images?.length) throw new AppError('EMPTY_COMMENT','Write an activity update or attach a screenshot.')
-        const activity = taskActivity.record(this,a.taskId,{actor:origin,kind:'agent',summary:'Agent update',detail:a.text},a.images || [])
+        const comment = a.commentId && this.comments(a.taskId).find(comment => comment.id === a.commentId && comment.source === 'user')
+        if (a.commentId && !comment) throw new AppError('NOT_FOUND','Choose a user comment on this task.')
+        const runId = this.assignedRun(a.taskId)
+        const activity = taskActivity.record(this,a.taskId,{actor:origin,kind:'agent',summary:comment?'Response to your comment':'Agent update',detail:a.text,data:{...(runId?{runId}:{}),...(comment?{commentID:comment.id}:{})}},a.images || [])
+        if (comment) this.db.prepare("UPDATE task_comments SET data=json_set(data,'$.actedOnActivityID',?) WHERE id=?").run(activity.id,comment.id)
         result = {activity,...(name === 'add_task_comment' ? {comment:activity,redirectedToActivity:true} : {})}
       } else if (name === 'set_agent_settings') {
         if (

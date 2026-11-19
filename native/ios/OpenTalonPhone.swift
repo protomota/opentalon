@@ -2333,6 +2333,8 @@ private struct TaskView: View {
     @State private var planEdit: PlanEdit?
     @State private var showHistory = false
     @State private var showActivity = false
+    @State private var showEarlierActivity = false
+    @State private var linkedComment: PhoneComment?
     @Environment(\.dismiss) private var dismiss
     @State private var confirmTrash = false
     @State private var confirmArchive = false
@@ -2402,7 +2404,15 @@ private struct TaskView: View {
                 Section("Activity") {
                     if let page = workspace.activityPage(for: taskID) {
                         TaskActivitySummary(page: page, colors: colors) { showActivity = true }
-                    } else { Text("Update OpenTalon on your Mac to separate Activity from your comments.").font(.caption).foregroundStyle(colors.muted) }
+                    } else {
+                        let earlier = (workspace.snapshot?.commentsByTask?[taskID] ?? []).filter { !$0.isUserComment(hasSeparatedActivity: false) }
+                        if !earlier.isEmpty {
+                            Button { showEarlierActivity = true } label: {
+                                PhoneActionLabel(title: "View earlier activity", systemImage: "clock.arrow.circlepath")
+                            }.accessibilityIdentifier("earlierTaskActivity")
+                        }
+                        Text("Update OpenTalon on your Mac to link agent responses to your comments.").font(.caption).foregroundStyle(colors.muted)
+                    }
                 }.listRowBackground(colors.card)
                 Section("History") {
                     Button { showHistory = true } label: {
@@ -2522,6 +2532,15 @@ private struct TaskView: View {
                 TaskActivityView(page: workspace.activityPage(for: taskID), colors: colors,
                                  waitingForMac: workspace.isLoadingActivity(for: taskID)) { before in
                     try workspace.loadActivity(for: taskID, before: before)
+                }
+            }
+            .sheet(isPresented: $showEarlierActivity) {
+                EarlierTaskActivityView(comments: (workspace.snapshot?.commentsByTask?[taskID] ?? []).filter { !$0.isUserComment(hasSeparatedActivity: false) }, colors: colors)
+            }
+            .sheet(item: $linkedComment) { entry in
+                TaskActivityView(page: workspace.commentActivityPage(for: entry.id), colors: colors,
+                                 waitingForMac: workspace.isLoadingCommentActivity(entry.id), commentID: entry.id) { before in
+                    try workspace.loadCommentActivity(taskID: taskID, commentID: entry.id, before: before)
                 }
             }
             .sheet(isPresented: $showHistory) {
@@ -2864,13 +2883,20 @@ private struct TaskView: View {
     }
 
     private func comments(for task: PhoneTask) -> some View {
-        Section(workspace.snapshot?.activityByTask == nil ? "Earlier messages" : "Comments") {
+        Section("Comments") {
             if let commentsByTask = workspace.snapshot?.commentsByTask {
-                ForEach(commentsByTask[task.id] ?? []) { entry in
+                let userComments = (commentsByTask[task.id] ?? []).filter { $0.isUserComment(hasSeparatedActivity: workspace.snapshot?.activityByTask != nil) } + workspace.acknowledgedLegacyComments(for: task.id)
+                if userComments.isEmpty { Text("No comments yet.").font(.caption).foregroundStyle(colors.muted) }
+                ForEach(userComments) { entry in
                     VStack(alignment: .leading, spacing: 4) {
                         if !entry.text.isEmpty { Text(entry.text).textSelection(.enabled) }
                         else { Label("Attachment on Mac", systemImage: "paperclip") }
-                        Text(commentStatus(entry)).font(.caption).foregroundStyle(colors.muted)
+                        if entry.wasActedOn && workspace.snapshot?.supportsCommentActivity == true {
+                            Button { linkedComment = entry } label: {
+                                Label("Acted on · View activity", systemImage: "checkmark.circle")
+                                    .font(.caption.weight(.semibold)).foregroundStyle(colors.actionAccent)
+                            }.buttonStyle(.plain).accessibilityIdentifier("commentActivity-" + entry.id)
+                        } else { Text(commentStatus(entry)).font(.caption).foregroundStyle(colors.muted) }
                     }
                 }
                 ForEach(workspace.pending.filter { $0.taskID == task.id && !$0.changesTask }) { request in
@@ -3232,7 +3258,7 @@ private struct QueueView: View {
     private func kind(_ request: PhoneRequest) -> String {
         switch request.action {
         case .createProject: "Create project"
-        case .loadActivity: "Load task activity"
+        case .loadActivity, .loadCommentActivity: "Load task activity"
         case .loadHistory: "Load task history"
         case .restoreRevision: "Restore task revision"
         case .savePlan: "Save plan"

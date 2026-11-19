@@ -71,6 +71,8 @@ final class PhoneWorkspace {
         var planDrafts: [String: String]?
         var historyPages: [String: TaskHistoryPage]?
         var activityPages: [String: TaskActivityPage]?
+        var commentActivityPages: [String: TaskActivityPage]?
+        var acknowledgedUserComments: [String: [PhoneComment]]?
         var capturedTask: CapturedTask?
     }
 
@@ -291,6 +293,8 @@ final class PhoneWorkspace {
                     updated.unsavedNotes = nil
                     updated.historyPages = nil
                     updated.activityPages = nil
+                    updated.commentActivityPages = nil
+                    updated.acknowledgedUserComments = nil
                     updated.capturedTask = nil
                 }
                 if updated.snapshot == nil, let legacy = load(directory.appending(path: "workspace.json")),
@@ -317,7 +321,14 @@ final class PhoneWorkspace {
                 guard let receipt else { continue }
                 var updated = state
                 if receipt.isSettled(at: snapshot.revision) {
-                    if let page = receipt.activity, receipt.outcome == .applied {
+                    if let page = receipt.activity, receipt.outcome == .applied, let commentID = page.commentID {
+                        updated.commentActivityPages = updated.commentActivityPages ?? [:]
+                        if case .loadCommentActivity(_, _, let before) = request.action, before != nil,
+                           let cached = updated.commentActivityPages?[commentID] {
+                            updated.commentActivityPages?[commentID] = cached.merging(page)
+                        } else { updated.commentActivityPages?[commentID] = page }
+                    }
+                    if let page = receipt.activity, receipt.outcome == .applied, page.commentID == nil {
                         updated.activityPages = updated.activityPages ?? [:]
                         let cached = updated.activityPages?[page.taskID]
                         let base = updated.snapshot?.activityByTask?[page.taskID]
@@ -331,6 +342,17 @@ final class PhoneWorkspace {
                         if let existing = updated.historyPages?[page.taskID] {
                             updated.historyPages?[page.taskID] = existing.merging(page)
                         } else { updated.historyPages?[page.taskID] = page }
+                    }
+                    if receipt.outcome == .applied, updated.snapshot?.activityByTask == nil,
+                       case .comment(let taskID, let text) = request.action {
+                        // Older Macs did not record authorship. Preserve only messages this phone explicitly sent.
+                        updated.acknowledgedUserComments = updated.acknowledgedUserComments ?? [:]
+                        var saved = updated.acknowledgedUserComments?[taskID] ?? []
+                        if !saved.contains(where: { $0.id == request.id.uuidString }) {
+                            saved.append(PhoneComment(id: request.id.uuidString, text: text,
+                                                      createdAt: request.createdAt.ISO8601Format(), delivery: "local", source: "user"))
+                        }
+                        updated.acknowledgedUserComments?[taskID] = saved
                     }
                     updated.pending.removeAll { $0.id == receipt.requestID }
                     updated.waiting.removeValue(forKey: receipt.requestID)
@@ -495,6 +517,20 @@ final class PhoneWorkspace {
         return nil
     }
 
+    func acknowledgedLegacyComments(for taskID: String) -> [PhoneComment] {
+        state.acknowledgedUserComments?[taskID] ?? []
+    }
+
+    func commentActivityPage(for commentID: String) -> TaskActivityPage? { state.commentActivityPages?[commentID] }
+    func isLoadingCommentActivity(_ commentID: String) -> Bool {
+        pending.contains { if case .loadCommentActivity(_, let id, _) = $0.action { return id == commentID }; return false }
+    }
+    func loadCommentActivity(taskID: String, commentID: String, before: Int?) throws {
+        guard snapshot?.supportsCommentActivity == true else { throw CompanionSyncError.missingWorkspace }
+        guard !pending.contains(where: { if case .loadCommentActivity(_, let id, let cursor) = $0.action { return id == commentID && cursor == before }; return false }) else { return }
+        try queue(.loadCommentActivity(taskID: taskID, commentID: commentID, beforeSequence: before))
+    }
+
     func activityPage(for taskID: String) -> TaskActivityPage? {
         let base = snapshot?.activityByTask?[taskID]
         guard let cached = state.activityPages?[taskID] else { return base }
@@ -655,7 +691,7 @@ final class PhoneWorkspace {
 
     func title(for request: PhoneRequest) -> String {
         switch request.action {
-        case .loadActivity: "Load task activity"
+        case .loadActivity, .loadCommentActivity: "Load task activity"
         case .loadHistory: "Load task history"
         case .restoreRevision: "Restore task revision"
         case .createProject(let name): name

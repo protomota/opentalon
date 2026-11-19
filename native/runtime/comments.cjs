@@ -30,12 +30,48 @@ function comments(store, taskId) {
       id: row.id,
       taskId: row.task_id,
       ...JSON.parse(row.data),
+      ...commentActivity(store, row),
       images: store.db
         .prepare('SELECT id,name,mime_type FROM comment_images WHERE comment_id=? ORDER BY rowid')
         .all(row.id)
-        .map((image) => ({ id: image.id, name: image.name, mimeType: image.mime_type })),
+        .map((image) => ({ id: image.id, name: image.name, mimeType: image.mime_type }))
     }))
 }
+function commentActivity(store, row) {
+  const comment = JSON.parse(row.data)
+  if (!store.activityReady || comment.source !== 'user') return {}
+  let activity =
+    comment.actedOnActivityID &&
+    store.db
+      .prepare(
+        "SELECT id,saved_at FROM task_activity WHERE id=? AND task_id=? AND json_extract(data,'$.commentID')=?"
+      )
+      .get(comment.actedOnActivityID, row.task_id, row.id)
+  const jobRow =
+    comment.runId &&
+    store.db
+      .prepare('SELECT data FROM agent_jobs WHERE id=? AND task_id=?')
+      .get(comment.runId, row.task_id)
+  const job = jobRow ? JSON.parse(jobRow.data) : null
+  if (
+    !activity &&
+    comment.delivery === 'delivered' &&
+    ['done', 'review'].includes(job?.state) &&
+    job.summary?.trim() &&
+    !/^The agent (ended its turn|finished its response)/.test(job.summary)
+  )
+    activity = store.db
+      .prepare(
+        "SELECT id,saved_at FROM task_activity WHERE task_id=? AND kind='agent' AND json_extract(data,'$.runId')=? ORDER BY sequence DESC LIMIT 1"
+      )
+      .get(row.task_id, comment.runId)
+  return {
+    activityState: job?.state || null,
+    activityID: activity?.id || null,
+    actedOnAt: activity?.saved_at || null
+  }
+}
+
 function insertComment(store, taskId, text, images = [], notifyAgent = false, author = {}) {
   const task = store.task(taskId)
   if (task.deleted) throw new AppError('IN_TRASH', 'Restore the task before adding a comment.')
@@ -52,14 +88,19 @@ function insertComment(store, taskId, text, images = [], notifyAgent = false, au
       createdAt: new Date().toISOString(),
       delivery: notifyAgent && !task.archivedAt && store.assignedRun(taskId) ? 'pending' : 'local',
       runId: author.runId || null,
-      agent: author.agent || null,
+      agent: author.agent || null
     })
   )
   for (const image of normalized)
     store.db
       .prepare('INSERT INTO comment_images VALUES (?,?,?,?,?)')
       .run(randomUUID(), id, image.name, image.mimeType, image.bytes)
-  if (store.activityReady) require('./task-activity.cjs').record(store, taskId, {actor:author.actor || 'You',kind:'comment',summary:'Added a comment'})
+  if (store.activityReady)
+    require('./task-activity.cjs').record(store, taskId, {
+      actor: author.actor || 'You',
+      kind: 'comment',
+      summary: 'Added a comment'
+    })
   return comments(store, taskId).find((comment) => comment.id === id)
 }
 function exportComments(store) {
@@ -76,8 +117,8 @@ function exportComments(store) {
         commentId: row.comment_id,
         name: row.name,
         mimeType: row.mime_type,
-        data: Buffer.from(row.bytes).toString('base64'),
-      })),
+        data: Buffer.from(row.bytes).toString('base64')
+      }))
   }
 }
 function validateComments(records, images, tasks) {
@@ -100,7 +141,11 @@ function validateComments(records, images, tasks) {
       typeof row.text !== 'string' ||
       row.text.length > 10000 ||
       !Number.isFinite(Date.parse(row.createdAt)) ||
-      !(row.source === undefined || ['user','legacy'].includes(row.source)) ||
+      !(row.source === undefined || ['user', 'legacy'].includes(row.source)) ||
+      !(
+        row.actedOnActivityID === undefined ||
+        (typeof row.actedOnActivityID === 'string' && row.actedOnActivityID.length <= 200)
+      ) ||
       !['pending', 'queued', 'delivered', 'needs-review', 'local'].includes(row.delivery) ||
       !(row.runId === null || typeof row.runId === 'string') ||
       !(row.agent === null || ['claude-code', 'codex'].includes(row.agent))
@@ -132,10 +177,11 @@ function restoreComments(store, records, images) {
       JSON.stringify({
         text: row.text,
         source: row.source,
+        actedOnActivityID: row.actedOnActivityID,
         createdAt: row.createdAt,
         delivery: ['pending', 'queued'].includes(row.delivery) ? 'needs-review' : row.delivery,
         runId: row.runId,
-        agent: row.agent,
+        agent: row.agent
       })
     )
   for (const image of images)
@@ -150,5 +196,5 @@ module.exports = {
   validateComments,
   restoreComments,
   imageBytes,
-  MAX_IMAGE_BYTES,
+  MAX_IMAGE_BYTES
 }

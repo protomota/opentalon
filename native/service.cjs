@@ -181,20 +181,9 @@ async function privateAction(name, input) {
     case 'native_phone_snapshot': {
       const workspace = store.snapshot()
       const commentsByTask = Object.create(null)
-      const rows = store.db.prepare(`
-        SELECT c.task_id, c.id, json_extract(c.data, '$.text') AS text,
-          json_extract(c.data, '$.createdAt') AS created_at,
-          json_extract(c.data, '$.delivery') AS delivery,
-          json_extract(c.data, '$.pickedUpAt') AS picked_up_at
-        FROM task_comments c JOIN tasks t ON t.id = c.task_id
-        WHERE t.deleted_at IS NULL AND json_extract(c.data,'$.source')='user'
-        ORDER BY c.rowid
-      `).all()
-      for (const row of rows) {
-        (commentsByTask[row.task_id] ??= []).push({
-          id: row.id, text: row.text, createdAt: row.created_at,
-          delivery: row.delivery, pickedUpAt: row.picked_up_at,
-        })
+      for (const task of workspace.tasks.filter(task => !task.deleted)) {
+        const comments = store.comments(task.id).filter(comment => comment.source === 'user')
+        if (comments.length) commentsByTask[task.id] = comments.map(({id,text,createdAt,delivery,pickedUpAt,source,actedOnAt,activityID,activityState})=>({id,text,createdAt,delivery,pickedUpAt,source,actedOnAt,activityID,activityState}))
       }
       return {
         workspace, commentsByTask, activityByTask: Object.fromEntries(workspace.tasks.filter(task=>!task.deleted).map(task=>[task.id, taskActivity.page(store, task.id, undefined, 5)])), historyByTask: Object.fromEntries(workspace.tasks.filter(task => !task.deleted).map(task => [task.id, taskHistory.page(store, task.id, undefined, 1)])), ...agentOptions(),

@@ -18,6 +18,7 @@ struct TaskComments: View {
     @State private var feedback: String?
     @State private var requestKey = UUID().uuidString
     @State private var zoom: DraftImage?
+    @State private var linkedComment: WorkComment?
     @State private var composing = false
     @FocusState private var commentFocused: Bool
 
@@ -64,6 +65,9 @@ struct TaskComments: View {
         .onChange(of: text) { _, _ in draftChanged() }
         .onChange(of: images.map(\.id)) { _, _ in draftChanged() }
         .onChange(of: posting) { _, _ in dirty = hasDraft || posting }
+        .sheet(item: $linkedComment) { comment in
+            TaskActivityPanel(taskID: item.id, commentID: comment.id)
+        }
         .sheet(item: $zoom) { image in
             VStack(alignment: .trailing) {
                 HStack {
@@ -131,7 +135,11 @@ struct TaskComments: View {
                     }
                 }
             }
-            if comment.delivery != "local" {
+            if comment.actedOnAt != nil, comment.activityID != nil {
+                Button("Acted on · View activity", systemImage: "checkmark.circle") { linkedComment = comment }
+                    .buttonStyle(.link).font(.caption).foregroundStyle(palette.accent)
+                    .accessibilityIdentifier("commentActivity-" + comment.id)
+            } else if comment.delivery != "local" {
                 Text(comment.delivery.replacingOccurrences(of: "-", with: " ").capitalized)
                     .font(.caption2).foregroundStyle(palette.muted)
             }

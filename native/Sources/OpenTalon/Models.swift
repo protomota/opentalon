@@ -172,6 +172,9 @@ struct DraftImage: Decodable, Identifiable {
 }
 
 struct WorkComment: Decodable, Identifiable {
+    let actedOnAt: String?
+    let activityID: String?
+    let activityState: String?
     var source: String?
     let id: String
     let text: String

@@ -11,7 +11,7 @@ function state(store, task) {
   }
 }
 
-function record(store, task, action, origin = 'Mac / connected agent') {
+function record(store, task, action, origin = 'Mac / connected agent', runId) {
   const value = state(store, task)
   const previous = store.db.prepare('SELECT state_json FROM task_history WHERE task_id=? ORDER BY version DESC LIMIT 1').get(task.id)
   const original = previous ? JSON.parse(previous.state_json) : null
@@ -22,12 +22,12 @@ function record(store, task, action, origin = 'Mac / connected agent') {
   store.db.prepare('INSERT INTO task_history VALUES (?,?,?,?,?,?,?,?)').run(
     id, task.id, version, savedAt, action, origin,
     JSON.stringify(changes), JSON.stringify(value))
-  if (store.activityReady) require('./task-activity.cjs').recordHistory(store, task.id, {id,savedAt,action,origin},value,original,changes)
+  if (store.activityReady) require('./task-activity.cjs').recordHistory(store, task.id, {id,savedAt,action,origin,runId: runId || (!origin.startsWith('You') && origin !== 'OpenTalon' ? store.assignedRun(task.id) : null)},value,original,changes)
 }
 
-function recordRevision(store, revision, action, origin) {
+function recordRevision(store, revision, action, origin, runId) {
   for (const row of store.db.prepare('SELECT id FROM tasks WHERE revision=?').all(revision))
-    record(store, store.task(row.id), action, origin)
+    record(store, store.task(row.id), action, origin, runId)
 }
 
 function migrate(store) {

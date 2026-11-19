@@ -73,3 +73,7 @@ At Brad’s request on November 10, Codex registered the packaged OpenTalon stdi
 Agents record work in Activity with `add_task_activity`. Comments are reserved for user-entered messages. Older `add_task_comment` clients are redirected to Activity. Read both streams for context.
 
 When you have actually acted on a user comment, pass its `commentId` to `add_task_activity` and describe what changed. This links the report to the user comment. Do not acknowledge comments merely because you read them. `list_task_activity` accepts `commentId` for the related run/report and task changes. `list_task_comments` returns user comments only; earlier unattributed messages remain in Activity.
+
+## Task plan documents
+
+Save plans in `create_task.planMarkdown` or use `set_task_plan` with `id`, the exact `expectedMarkdown`, full new `markdown`, and a fresh `requestKey`. Read back `get_task.planMarkdown` to verify. Do not paste a plan or its path into Notes or Comments as a substitute. The native Plan section opens the task-ID `.md` document in Preview, with source editing and import/export. Version 1.0.20 recovers the latest complete legacy `--- Plan: ... ---` / `--- End plan ---` block into an empty Plan field; original notes, historical versions and existing Plan documents remain intact. Incomplete or fenced examples are not imported, and referenced paths are never read automatically.

@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { randomUUID } = require('node:crypto')
-const { Store } = require('./store.cjs')
+const { Store, FORMAT } = require('./store.cjs')
 
 test('a version-seven workspace upgrades without changing existing tasks', async (t) => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'opentalon-plan-migration-'))
@@ -20,7 +20,7 @@ test('a version-seven workspace upgrades without changing existing tasks', async
   assert.equal(store.task(task.id).notes, 'Keep these notes')
   assert.equal(store.task(task.id).taskKey, task.taskKey)
   assert.equal(store.task(task.id).priority, 'High')
-  assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 11)
+  assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, FORMAT)
 })
 
 test('Markdown plans persist, detect document conflicts, follow project moves and survive both backup formats', async (t) => {
@@ -77,4 +77,64 @@ test('assistant text edits compare only their own fields and validate all values
   await assert.rejects(write('companion_set_task_field', { id: task.id, field: 'title', expectedValue: 'Original', value: 'Stale' }), { code: 'CONFLICT' })
   await assert.rejects(write('companion_set_task_field', { id: task.id, field: 'title', expectedValue: 'Renamed', value: '' }), { code: 'INVALID_ARGUMENT' })
   await assert.rejects(write('companion_set_task_field', { id: task.id, field: 'deleted_at', expectedValue: null, value: 'now' }), { code: 'INVALID_ARGUMENT' })
+})
+
+test('legacy Markdown attachments recover on upgrade without replacing documents or losing notes and history', async (t) => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'opentalon-attached-plan-'))
+  let store = new Store(folder)
+  t.after(() => { store.close(); fs.rmSync(folder, { recursive: true, force: true }) })
+  const boardId = store.boards()[0].id
+  const block = markdown => `--- Plan: /not-a-real-file/project.md (copied earlier) ---\n${markdown}--- End plan ---\n`
+  const latest = '# Current plan\n\n- [ ] Verify the release.\n\n```text\n--- End plan ---\n```\n'
+  const notes = 'Keep this context.\n' + block('# Previous plan\n') + '\n' + block(latest) + '\nKeep this follow-up.'
+  const create = async (title, markdown, body = notes) => (await store.dispatch('create_task', {
+    requestKey: randomUUID(), boardId, title, notes: body, planMarkdown: markdown,
+  })).task
+  // Explicit empty plans recreate pre-upgrade records without using the new compatibility write path.
+  const recovered = await create('Recover the latest complete plan', '')
+  const existing = await create('Keep my edited document', '# Independently edited\n')
+  const incomplete = await create('Do not invent a missing attachment', '', '--- Plan: /missing.md ---\n# Incomplete')
+  const fenced = await create('Ignore a quoted example', '', '```text\n' + block('# Example only\n') + '```\n')
+  const previousHistory = store.dispatch('get_task_history', { id: recovered.id })
+  const history = await previousHistory
+  store.db.exec('DELETE FROM schema_migrations WHERE version=12; PRAGMA user_version=11;')
+  store.close(); store = new Store(folder)
+  assert.equal(store.task(recovered.id).planMarkdown, latest)
+  assert.equal(store.task(recovered.id).notes, notes)
+  assert.equal(store.task(recovered.id).taskKey, recovered.taskKey)
+  assert.equal(store.task(recovered.id).status, recovered.status)
+  assert.equal(store.task(existing.id).planMarkdown, '# Independently edited\n')
+  assert.equal(store.task(incomplete.id).planMarkdown, '')
+  assert.equal(store.task(fenced.id).planMarkdown, '')
+  const updatedHistory = await store.dispatch('get_task_history', { id: recovered.id })
+  assert.equal(updatedHistory.entries.length, history.entries.length + 1)
+  assert.equal(updatedHistory.entries[0].action, 'recover_task_plan')
+  assert.deepEqual(updatedHistory.entries.slice(1), history.entries)
+  const revision = store.revision()
+  store.close(); store = new Store(folder)
+  assert.equal(store.revision(), revision, 'recovery runs once')
+  assert.equal(store.task(recovered.id).planMarkdown, latest)
+})
+
+test('old connector plan blocks and version-eleven backups remain accessible as real plans', async (t) => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'opentalon-plan-compatibility-'))
+  const store = new Store(folder)
+  t.after(() => { store.close(); fs.rmSync(folder, { recursive: true, force: true }) })
+  const write = (name, args) => store.dispatch(name, { requestKey: randomUUID(), ...args })
+  const markdown = '# Attached plan\n\n- [ ] Check preview and editing.\n'
+  const notes = `Context\n--- Plan: /missing/plan.md ---\n${markdown}--- End plan ---\n`
+  const { task } = await write('create_task', { boardId: store.boards()[0].id, title: 'Legacy connector', notes })
+  assert.equal(task.planMarkdown, markdown)
+  await write('set_task_plan', { id: task.id, expectedMarkdown: markdown, markdown: '# User changed the plan\n' })
+  await write('update_task', { id: task.id, expectedRevision: store.task(task.id).revision, notes: notes + 'More context' })
+  assert.equal(store.task(task.id).planMarkdown, '# User changed the plan\n')
+  const backup = await write('create_backup', { format: 'json' })
+  const payload = JSON.parse(fs.readFileSync(backup.path))
+  payload.formatVersion = 11
+  payload.tasks.find(row => row.id === task.id).plan_markdown = ''
+  fs.writeFileSync(backup.path, JSON.stringify(payload))
+  const preview = await store.dispatch('preview_destructive_action', { action: 'restore_backup', path: backup.path })
+  await write('confirm_destructive_action', { token: preview.token })
+  assert.equal(store.task(task.id).planMarkdown, markdown)
+  assert.equal(store.task(task.id).notes, notes + 'More context')
 })

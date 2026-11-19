@@ -13,7 +13,31 @@ const {
 
 const taskHistory = require('./task-history.cjs')
 const taskActivity = require('./task-activity.cjs')
-const FORMAT = 11
+const FORMAT = 12
+// Older connectors copied Markdown documents into notes with explicit delimiters.
+// Recover only complete blocks; never read a referenced filesystem path.
+function legacyPlan(notes) {
+  let latest = '', current = null, fence = null
+  for (const line of (notes || '').match(/[^\n]*\n|[^\n]+$/g) || []) {
+    const text = line.replace(/\r?\n$/, '')
+    if (fence) {
+      if (current) current.push(line)
+      if (new RegExp('^ {0,3}' + fence.marker + '{' + fence.length + ',}[ \\t]*$').test(text)) fence = null
+      continue
+    }
+    const opening = text.match(/^ {0,3}(`{3,}|~{3,})/)
+    if (opening) {
+      fence = { marker: opening[1][0], length: opening[1].length }
+      if (current) current.push(line)
+    } else if (/^--- Plan: [^\r\n]+\.md[^\r\n]* ---[ \t]*$/.test(text)) current = []
+    else if (/^--- End plan ---[ \t]*$/.test(text) && current) {
+      const markdown = current.join('')
+      if (markdown.trim() && markdown.length <= 100000 && markdown.isWellFormed() && !markdown.includes('\0')) latest = markdown
+      current = null
+    } else if (current) current.push(line)
+  }
+  return latest
+}
 const archiveAfterMs = 7 * 24 * 60 * 60 * 1000
 const taskKeyPattern = /^[A-Z]{3}-[0-9]{3,16}$/
 const defaultAgentSettings = { defaultAgent: 'codex', workingFolder: '' }
@@ -175,6 +199,7 @@ class Store {
       if (current < 10) taskHistory.migrate(this)
       if (current < 11) taskActivity.migrate(this)
       this.activityReady = true
+      if (current < 12) this.migrateLegacyPlans()
       this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;')
       fs.chmodSync(this.file, 0o600)
     } catch (error) {
@@ -310,6 +335,26 @@ class Store {
       this.db.exec('ROLLBACK')
       throw error
     }
+  }
+
+  migrateLegacyPlans() {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const revision = this.revision() + 1
+      let recovered = 0
+      for (const row of this.db.prepare("SELECT id,notes FROM tasks WHERE plan_markdown=''").all()) {
+        const markdown = legacyPlan(row.notes)
+        if (!markdown) continue
+        this.db.prepare('UPDATE tasks SET plan_markdown=? WHERE id=?').run(markdown, row.id)
+        const task = this.saveTask(this.task(row.id), revision)
+        taskHistory.record(this, task, 'recover_task_plan', 'OpenTalon')
+        recovered++
+      }
+      if (recovered) this.set('revision', revision)
+      this.db.exec('PRAGMA user_version=12')
+      this.db.prepare('INSERT INTO schema_migrations VALUES (?,?)').run(12, new Date().toISOString())
+      this.db.exec('COMMIT')
+    } catch (error) { this.db.exec('ROLLBACK'); throw error }
   }
 
   archiveCompletedTasks(now = new Date()) {
@@ -1261,8 +1306,8 @@ class Store {
           )
         this.assignTaskKey(id, boardId)
         if (a.issueType !== undefined) this.db.prepare('UPDATE tasks SET issue_type=? WHERE id=?').run(a.issueType, id)
-        if (a.planMarkdown !== undefined)
-          this.db.prepare('UPDATE tasks SET plan_markdown=? WHERE id=?').run(a.planMarkdown, id)
+        this.db.prepare('UPDATE tasks SET plan_markdown=? WHERE id=?')
+          .run(a.planMarkdown ?? legacyPlan(a.notes), id)
         result = { task: this.task(id) }
         if ((a.agent || a.model || a.dispatchComment !== undefined) && status !== 'Sent to agent')
           throw new AppError('INVALID_ARGUMENT', 'Agent options and dispatch comments require sending a task.')
@@ -1280,6 +1325,8 @@ class Store {
           if (a.notes !== undefined) task.notes = a.notes
           if (a.planMarkdown !== undefined)
             this.db.prepare('UPDATE tasks SET plan_markdown=? WHERE id=?').run(a.planMarkdown, task.id)
+          else if (a.notes !== undefined && !task.planMarkdown)
+            this.db.prepare('UPDATE tasks SET plan_markdown=? WHERE id=?').run(legacyPlan(a.notes), task.id)
           if (a.issueType !== undefined) task.issueType = a.issueType
           if (a.priority !== undefined) task.priority = a.priority
           if (a.definitionOfDone !== undefined) task.definitionOfDone = a.definitionOfDone
@@ -1426,7 +1473,7 @@ class Store {
                 task.task_key,
                 task.completed_at,
                 task.archived_at,
-                task.plan_markdown,
+                task.plan_markdown || legacyPlan(task.notes),
                 task.issue_type
               )
           this.backfillTaskKeys()
@@ -1617,7 +1664,7 @@ class Store {
             'This backup needs a newer OpenTalon. Current data is unchanged.'
           )
         if (
-          ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, FORMAT].includes(payload.formatVersion) ||
+          ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, FORMAT].includes(payload.formatVersion) ||
           !Array.isArray(payload.boards) ||
           !Array.isArray(payload.tasks) ||
           !payload.preferences ||
@@ -1650,7 +1697,7 @@ class Store {
             'This backup needs a newer OpenTalon. Current data is unchanged.'
           )
         if (
-          ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, FORMAT].includes(format) ||
+          ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, FORMAT].includes(format) ||
           db.prepare('PRAGMA application_id').get().application_id !== APPLICATION_ID
         )
           throw new AppError('INVALID_BACKUP', 'This is not a supported OpenTalon backup.')

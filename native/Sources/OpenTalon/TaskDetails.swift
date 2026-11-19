@@ -135,9 +135,14 @@ struct TaskDetails: View {
                             planEdit = PlanEdit(id: item.id, markdown: item.planMarkdown ?? "", reference: item.reference,
                                                 context: "\(draft.title)\n\(draft.notes)\nDefinition of done: \(draft.criteria)")
                         } label: {
-                            Label((item.planMarkdown ?? "").isEmpty ? "Create plan" : "View plan", systemImage: "doc.text")
+                            Label((item.planMarkdown ?? "").isEmpty ? "Create plan" : TaskPlan.filename(reference: item.reference), systemImage: "doc.text")
                         }
+                        .help((item.planMarkdown ?? "").isEmpty ? "Create a Markdown plan for this task" : "Open the attached Markdown plan")
                         .accessibilityIdentifier("taskPlan")
+                        if !(item.planMarkdown ?? "").isEmpty {
+                            Text("Markdown document · Open to preview or edit")
+                                .font(.caption).foregroundStyle(palette.muted)
+                        }
                     }
                     if let error {
                         Text(error).font(.caption).foregroundStyle(palette.danger)
@@ -196,7 +201,7 @@ struct TaskDetails: View {
             } persistDraft: { markdown in
                 UserDefaults.standard.set(markdown, forKey: "planDraft." + edit.id)
             }
-            .frame(minWidth: 600, minHeight: 650)
+            .frame(width: 680, height: 720)
         }
         .alert("Mark this task done anyway?", isPresented: $confirmForceComplete) {
             Button("Cancel", role: .cancel) {}

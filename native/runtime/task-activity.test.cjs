@@ -243,7 +243,7 @@ test('version ten upgrades preserve old reports, user feedback and screenshot ID
     })
   )
   f.store.db.exec(
-    'DROP TABLE activity_images; DROP TABLE task_activity; DELETE FROM schema_migrations WHERE version=11; PRAGMA user_version=10'
+    'DROP TABLE activity_images; DROP TABLE task_activity; DELETE FROM schema_migrations WHERE version>=11; PRAGMA user_version=10'
   )
   f.reopen()
   assert.equal(f.store.task(task.id).commentCount, 0)

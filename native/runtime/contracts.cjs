@@ -216,7 +216,7 @@ const tools = [
   tool('get_task', 'Read one task and its revision by UUID or project task ID (e.g. VOX-001), including a trashed task. Use the returned UUID for edits.', { id }, ['id']),
   tool(
     'create_task',
-    'Create a task, normally in To do. Returns the committed task and revision.',
+    'Create a task, normally in To do. Save an attached Markdown plan in planMarkdown, never buried in notes. Returns the committed task and revision.',
     {
       ...write,
       ...agentSelection,
@@ -236,7 +236,7 @@ const tools = [
   ),
   tool(
     'update_task',
-    'Patch supplied issueType (Issue or Bug), title, notes, priority, dueDate, definitionOfDone or status. Use last-read expectedRevision; conflicts return the current task. Dispatched agent runs must complete through report_agent_progress with proof, not by changing status.',
+    'Patch supplied issueType (Issue or Bug), title, notes, planMarkdown, priority, dueDate, definitionOfDone or status. Save plans in planMarkdown instead of notes. Use last-read expectedRevision; conflicts return the current task. Dispatched agent runs must complete through report_agent_progress with proof, not by changing status.',
     {
       ...taskWrite,
       title: string(),

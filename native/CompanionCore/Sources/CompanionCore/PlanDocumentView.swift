@@ -115,7 +115,7 @@ public struct PlanDocumentView: View {
     public var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Plan").font(.headline)
+                Text(TaskPlan.filename(reference: reference)).font(.headline).lineLimit(1)
                 Spacer()
                 Button(draft == original ? "Close" : "Cancel") {
                     generation?.cancel()
@@ -158,7 +158,7 @@ public struct PlanDocumentView: View {
                             .focused($focusedInput, equals: "source")
                             .font(.system(.body, design: .monospaced))
                             .scrollContentBackground(.hidden)
-                            .padding(12).frame(minHeight: 360)
+                            .padding(12).frame(height: 360)
                             .background(colors.card, in: RoundedRectangle(cornerRadius: 18))
                             .accessibilityIdentifier("planMarkdownEditor")
                             .background { inputGeometry("source") }

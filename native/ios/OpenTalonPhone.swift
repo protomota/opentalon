@@ -2335,6 +2335,7 @@ private struct TaskView: View {
     @State private var showActivity = false
     @State private var showEarlierActivity = false
     @State private var linkedComment: PhoneComment?
+    @State private var showFullLegacyNotes = false
     @Environment(\.dismiss) private var dismiss
     @State private var confirmTrash = false
     @State private var confirmArchive = false
@@ -2429,11 +2430,15 @@ private struct TaskView: View {
                                             reference: task.displayTaskID ?? "Task",
                                             context: "\(task.title)\n\(task.notes)\nDefinition of done: \(task.definitionOfDone)")
                     } label: {
-                        PhoneActionLabel(title: workspace.displayedPlan(for: task).isEmpty ? "Create plan" : "View plan",
+                        PhoneActionLabel(title: LocalizedStringKey(workspace.displayedPlan(for: task).isEmpty ? "Create plan" : TaskPlan.filename(reference: task.displayTaskID ?? "Task")),
                                          systemImage: "doc.text")
                     }
                     .accessibilityIdentifier("taskPlan")
                     .disabled(!snapshot.supportsTaskPlans)
+                    if !workspace.displayedPlan(for: task).isEmpty {
+                        Text("Markdown document · Open to preview or edit")
+                            .font(.caption).foregroundStyle(colors.muted)
+                    }
                     if workspace.hasPendingPlan(for: task.id) {
                         Label("Plan saved locally. Queued for Mac.", systemImage: "clock")
                             .font(.caption).foregroundStyle(colors.muted)
@@ -2848,6 +2853,7 @@ private struct TaskView: View {
         let canEdit = snapshot.supportsNoteEditing
         let pending = workspace.pendingNotes(for: task.id)
         let text = pending ?? task.notes
+        let hasCopiedPlan = !workspace.displayedPlan(for: task).isEmpty && text.contains("--- Plan:") && text.contains("--- End plan ---")
         return Section("Notes") {
             if canEdit, workspace.pendingTaskChange(for: task.id) == nil {
                 Button {
@@ -2856,6 +2862,7 @@ private struct TaskView: View {
                 } label: {
                     HStack(alignment: .top) {
                         Text(text.isEmpty ? "Add notes" : text)
+                            .lineLimit(hasCopiedPlan && !showFullLegacyNotes ? 8 : nil)
                             .foregroundStyle(text.isEmpty ? colors.muted : colors.text)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Image(systemName: "pencil")
@@ -2869,7 +2876,7 @@ private struct TaskView: View {
                     Text("An unsaved edit is ready to review.").font(.caption).foregroundStyle(colors.danger)
                 }
             } else {
-                if !text.isEmpty { Text(text).textSelection(.enabled) }
+                if !text.isEmpty { Text(text).lineLimit(hasCopiedPlan && !showFullLegacyNotes ? 8 : nil).textSelection(.enabled) }
                 if !canEdit {
                     Text("Update OpenTalon on your Mac to edit notes.")
                         .font(.caption).foregroundStyle(colors.muted)
@@ -2877,6 +2884,12 @@ private struct TaskView: View {
                     Text("Notes can be edited after the current change syncs.")
                         .font(.caption).foregroundStyle(colors.muted)
                 }
+            }
+            if hasCopiedPlan {
+                Button(showFullLegacyNotes ? "Show less" : "Show full notes") { showFullLegacyNotes.toggle() }
+                    .font(.caption).foregroundStyle(colors.actionAccent)
+                Text("Your plan is available as a Markdown document in Plan below.")
+                    .font(.caption).foregroundStyle(colors.muted)
             }
         }
         .listRowBackground(colors.card)

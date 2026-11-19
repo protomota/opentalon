@@ -6,7 +6,9 @@ const { randomUUID } = require('node:crypto')
 const { Store } = require('./store.cjs')
 const { Connector } = require('./mcp.cjs')
 function fixture(t) {
-  const folder = fs.mkdtempSync('/Volumes/Expand/Codex Media/opentalon/tests/activity-')
+  const root = process.env.OPENTALON_TEST_ROOT || '/Volumes/Expand/Codex Media/opentalon/tests'
+  fs.mkdirSync(root, { recursive: true })
+  const folder = fs.mkdtempSync(path.join(root, 'activity-'))
   let store = new Store(folder)
   const cleanup = []
   t.after(async () => {

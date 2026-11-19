@@ -32,3 +32,9 @@ Comments are only messages explicitly entered by the user. Agents use `add_task_
 The task’s main view keeps Activity collapsed behind **View activity**. Only user comments appear inline. **Acted on · View activity** opens the response and recorded task changes associated with that comment, without unrelated runs. Pickup alone is not treated as acted on. Older snapshots without reliable authorship keep their mixed messages behind **View earlier activity**. Comments explicitly written on this phone remain visible after acknowledgement from an older Mac. Update both apps for linked comment activity.
 
 Saved plans appear as task-ID `.md` documents in **Plan**, with one-click Preview and Markdown editing. Version 1.0.20 recovers the latest complete legacy plan block copied into Notes when Plan is empty. Source notes and previous revisions are preserved; existing Plan documents are never replaced.
+
+## First launch on iPhone and iPad
+
+New installs show a short introduction to task boards, plans and agents, followed by Mac setup: install OpenTalon on an Apple silicon Mac with macOS 14 or later, use the same Apple Account with iCloud Drive, and keep the Mac app open. Agent setup is optional. The guide can be skipped and reopened from **Settings → Support → Getting started**. Existing installations with a saved workspace continue directly to their tasks.
+
+Before the first Mac sync, **Get started** provides the Mac download, setup guide, sync status and a **Save an idea** editor. One starter idea is stored on that device and survives relaunch. After the Mac connects, **Create task** opens the normal task editor with that idea prefilled. Cancel keeps the idea; successfully queueing the task clears it. Saving the idea alone does not create a project, sync it or dispatch an agent.

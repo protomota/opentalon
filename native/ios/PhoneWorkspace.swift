@@ -89,6 +89,7 @@ final class PhoneWorkspace {
     private(set) var lastCheck: Date?
     private(set) var lastCloudContact: Date?
     private(set) var pickupNotice: String?
+    let hasSavedWorkspace: Bool
 
     init() {
         #if DEBUG && targetEnvironment(simulator)
@@ -100,6 +101,12 @@ final class PhoneWorkspace {
         #else
         cloud = CompanionCloud()
         #endif
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        hasSavedWorkspace = files.filter { $0.lastPathComponent.hasPrefix("cloud-") && $0.pathExtension == "json" }
+            .contains { url in
+                guard let data = try? Data(contentsOf: url) else { return false }
+                return (try? JSONDecoder().decode(LocalState.self, from: data))?.snapshot != nil
+            }
     }
 
     var snapshot: PhoneSnapshot? { state.snapshot }

@@ -292,6 +292,11 @@ struct CompanionHome: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("appearanceTheme") private var theme = OpenTalonTheme.system
     @State private var showAddTask = false
+    @AppStorage("OpenTalon.introductionCompleted") private var introductionCompleted = false
+    @AppStorage("OpenTalon.savedStarterIdea") private var starterIdea = ""
+    @State private var showIntroduction = false
+    @State private var showStarterIdea = false
+    @State private var captureSeed = ""
     @State private var openedTask: PhoneWorkspace.CapturedTask?
     @State private var page = Page.today
 
@@ -301,6 +306,7 @@ struct CompanionHome: View {
             NavigationStack {
                 if workspace.snapshot != nil {
                     TodayView()
+                        .safeAreaInset(edge: .top, spacing: 0) { savedIdeaReady(colors: colors) }
                         .navigationTitle("Today")
                         .toolbar { controls }
                         .modifier(PhoneReviewPrompt(isSelected: page == .today && !showAddTask))
@@ -349,7 +355,23 @@ struct CompanionHome: View {
             .tabItem { tabLabel("Settings", systemImage: "gearshape", destination: .settings, colors: colors) }
             .tag(Page.settings)
         }
-        .sheet(isPresented: $showAddTask) { CaptureView().tint(colors.text) }
+        .sheet(isPresented: $showAddTask) {
+            CaptureView(initialIdea: captureSeed) {
+                if !captureSeed.isEmpty && starterIdea == captureSeed { starterIdea = "" }
+            }.tint(colors.text)
+        }
+        .sheet(isPresented: $showStarterIdea) { StarterIdeaView(idea: $starterIdea) }
+        .fullScreenCover(isPresented: $showIntroduction) {
+            PhoneIntroduction {
+                introductionCompleted = true
+                showIntroduction = false
+            }
+        }
+        .task {
+            guard !introductionCompleted else { return }
+            if workspace.hasSavedWorkspace { introductionCompleted = true }
+            else { showIntroduction = true }
+        }
         .sheet(isPresented: $showAssistant) {
             if let snapshot = workspace.snapshot {
                 PhoneAssistantView(workspaceID: snapshot.workspaceID)
@@ -401,34 +423,76 @@ struct CompanionHome: View {
     }
 
     private func syncUnavailable(colors: OpenTalonColors) -> some View {
-        ContentUnavailableView {
-            if workspace.syncError != nil, !workspace.syncing {
-                Label("iCloud needs attention", systemImage: "exclamationmark.icloud")
-            } else {
-                Label("Syncing your workspace", systemImage: "icloud")
-            }
-        } description: {
-            VStack(spacing: 8) {
-                if let error = workspace.syncError, !workspace.syncing {
-                    Text(error)
-                } else {
-                    Text("Your first sync can take a few minutes if you have a lot of tasks. You can use other tabs while it runs. If you leave the app, it checks again when you return.")
-                    if workspace.remoteWorkspaceFound == false {
-                        Text("Still waiting for your Mac to publish its workspace. Check iCloud Sync in Settings on your Mac.")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                Image("WelcomeIcon").resizable().frame(width: 64, height: 64)
+                    .clipShape(RoundedRectangle(cornerRadius: 15)).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Your Mac starts the workspace").font(.largeTitle.bold())
+                    Text("Organize tasks and projects on your Mac, then take them with you on iPhone and iPad. Your Mac also runs the work you send to an agent.")
+                        .foregroundStyle(colors.muted)
+                }
+                VStack(alignment: .leading, spacing: 16) {
+                    Label("Connect your Mac", systemImage: "desktopcomputer").font(.headline)
+                    Text("Install OpenTalon on your Mac, use the same Apple Account with iCloud Drive on both devices, and keep the Mac app open.")
+                        .foregroundStyle(colors.muted)
+                    Link("Get the Mac app", destination: URL(string: "https://opentalon.ai/download")!)
+                        .buttonStyle(PhoneActionButtonStyle(emphasized: true))
+                        .accessibilityIdentifier("welcomeMacDownload")
+                    Text("Requires an Apple silicon Mac with macOS 14 or later.")
+                        .font(.footnote).foregroundStyle(colors.muted)
+                    Button("Setup guide") { showIntroduction = true }
+                        .buttonStyle(PhoneActionButtonStyle()).accessibilityIdentifier("welcomeSetupGuide")
+                    if let error = workspace.syncError, !workspace.syncing {
+                        Label("iCloud needs attention", systemImage: "exclamationmark.icloud").font(.subheadline.bold())
+                        Text(error).font(.callout).foregroundStyle(colors.muted)
+                    } else {
+                        Label(workspace.syncing ? "Checking iCloud for your Mac…" : "Waiting for your Mac’s first sync", systemImage: "icloud")
+                            .font(.footnote).foregroundStyle(colors.muted)
                     }
+                    Button("Check Sync Settings") { page = .settings }
+                        .buttonStyle(PhoneActionButtonStyle())
                 }
-            }
-        } actions: {
-            VStack(spacing: 14) {
-                if workspace.syncing {
-                    ProgressView().accessibilityLabel("Checking iCloud")
+                .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+                .background(colors.card, in: RoundedRectangle(cornerRadius: 24))
+                VStack(alignment: .leading, spacing: 14) {
+                    Label(starterIdea.isEmpty ? "Start with an idea" : "Your saved idea", systemImage: "square.and.pencil").font(.headline)
+                    Text(starterIdea.isEmpty ? "Get a task out of your head while you set up your Mac." : starterIdea)
+                        .foregroundStyle(starterIdea.isEmpty ? colors.muted : colors.text).lineLimit(6)
+                    Button(starterIdea.isEmpty ? "Save an idea" : "Edit idea") { showStarterIdea = true }
+                        .buttonStyle(PhoneActionButtonStyle()).accessibilityIdentifier("welcomeSaveIdea")
+                    Text("Saved on this device. Once your Mac connects, you can turn it into a task.")
+                        .font(.footnote).foregroundStyle(colors.muted)
                 }
-                Button("Check Sync Settings") { page = .settings }
-                    .buttonStyle(PhoneActionButtonStyle())
+                .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+                .background(colors.card, in: RoundedRectangle(cornerRadius: 24))
             }
+            .padding(24).frame(maxWidth: 620, alignment: .leading).frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .foregroundStyle(colors.text)
         .background(colors.canvas.ignoresSafeArea())
+        .navigationTitle("Get started")
+        .accessibilityIdentifier("welcomeWaitingForMac")
+    }
+
+    @ViewBuilder private func savedIdeaReady(colors: OpenTalonColors) -> some View {
+        if !starterIdea.isEmpty {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "square.and.pencil").foregroundStyle(colors.actionAccent)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Your saved idea is ready").font(.subheadline.bold())
+                    Text(starterIdea).font(.caption).foregroundStyle(colors.muted).lineLimit(2)
+                    Button("Create task") { captureSeed = starterIdea; showAddTask = true }
+                        .buttonStyle(PhoneActionButtonStyle()).accessibilityIdentifier("createTaskFromStarterIdea")
+                }
+                Spacer(minLength: 0)
+                Button("Edit") { showStarterIdea = true }.buttonStyle(PhoneActionButtonStyle())
+            }
+            .padding(16).frame(maxWidth: 620, alignment: .leading)
+            .background(colors.card, in: RoundedRectangle(cornerRadius: 20))
+            .padding(.horizontal, 16).padding(.vertical, 8)
+            .frame(maxWidth: .infinity).background(colors.canvas)
+        }
     }
 
     @ToolbarContentBuilder
@@ -444,6 +508,7 @@ struct CompanionHome: View {
         }
         PhoneActionToolbarItem(placement: .primaryAction) {
             Button {
+                captureSeed = ""
                 showAddTask = true
             } label: {
                 Image(systemName: "plus")
@@ -454,6 +519,154 @@ struct CompanionHome: View {
             .accessibilityLabel("New task")
             .disabled(workspace.snapshot?.projects.isEmpty != false)
         }
+    }
+}
+
+private struct PhoneIntroduction: View {
+    @Environment(\.phoneColors) private var colors
+    @State private var step = 0
+    let finish: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("OpenTalon").font(.headline)
+                Spacer()
+                Button("Not now", action: finish).accessibilityIdentifier("introSkip")
+            }.padding(20)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    Image("WelcomeIcon").resizable().frame(width: 88, height: 88)
+                        .clipShape(RoundedRectangle(cornerRadius: 21)).accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(step == 0 ? "Your tasks. Your agents." : "Start with your Mac.")
+                            .font(.largeTitle.bold()).accessibilityIdentifier("introHeading")
+                        Text(step == 0
+                             ? "Plan your work on Mac. Manage tasks and follow your agents from iPhone and iPad."
+                             : "Your Mac is the hub. This app connects to its workspace through your private iCloud account.")
+                            .font(.title3).foregroundStyle(colors.muted)
+                    }
+                    if step == 0 {
+                        Label("You’ll need OpenTalon on a Mac for synced boards and agent work.", systemImage: "desktopcomputer")
+                            .font(.callout).foregroundStyle(colors.muted)
+                        VStack(alignment: .leading, spacing: 22) {
+                            feature("Organize your work", detail: "Keep tasks in project boards and move them from To do to Done.", symbol: "square.grid.2x2")
+                            feature("Keep the plan close", detail: "Save a Markdown plan with a task, then preview or edit it.", symbol: "doc.text")
+                            feature("Send work to an agent", detail: "Choose Codex or Claude on your Mac and follow the task’s progress from your phone.", symbol: "paperplane")
+                        }
+                        .padding(22).background(colors.card, in: RoundedRectangle(cornerRadius: 24))
+                    } else {
+                        VStack(alignment: .leading, spacing: 24) {
+                            setupStep("1", title: "Install OpenTalon for Mac", detail: "Get the free app on an Apple silicon Mac with macOS 14 or later, then open it.")
+                            Link("Get the Mac app", destination: URL(string: "https://opentalon.ai/download")!)
+                                .buttonStyle(PhoneActionButtonStyle(emphasized: true)).accessibilityIdentifier("introMacDownload")
+                            setupStep("2", title: "Use the same Apple Account", detail: "Enable iCloud Drive on your Mac and this device, using the same Apple Account.")
+                            setupStep("3", title: "Keep your Mac running", detail: "Keep OpenTalon open and your Mac awake for sync and agent work. On Mac, check Settings → iCloud sync.")
+                        }
+                        .padding(22).background(colors.card, in: RoundedRectangle(cornerRadius: 24))
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Not at your Mac yet?").font(.headline)
+                            Text("Save an idea on this device now. When your Mac connects, turn it into a task.")
+                                .foregroundStyle(colors.muted)
+                            Text("Agents are optional. Connect Codex or Claude in the Mac app’s Settings when you’re ready.")
+                                .font(.footnote).foregroundStyle(colors.muted)
+                        }
+                    }
+                }
+                .padding(24).frame(maxWidth: 620, alignment: .leading).frame(maxWidth: .infinity)
+            }
+            HStack(spacing: 16) {
+                if step == 1 { Button("Back") { step = 0 }.accessibilityIdentifier("introBack") }
+                Text(step == 0 ? "1 of 2" : "2 of 2").font(.caption).foregroundStyle(colors.muted)
+                Spacer()
+                Button(step == 0 ? "Continue" : "Get started") {
+                    if step == 0 { step = 1 } else { finish() }
+                }
+                .buttonStyle(PhoneActionButtonStyle(emphasized: true))
+                .accessibilityIdentifier(step == 0 ? "introContinue" : "introFinish")
+            }.padding(20)
+        }
+        .buttonStyle(PhoneActionButtonStyle())
+        .foregroundStyle(colors.text).tint(colors.actionAccent)
+        .background(colors.canvas.ignoresSafeArea())
+        .interactiveDismissDisabled()
+    }
+
+    private func feature(_ title: String, detail: String, symbol: String) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: symbol).font(.title3).foregroundStyle(colors.actionAccent).frame(width: 24)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title).font(.headline)
+                Text(detail).foregroundStyle(colors.muted)
+            }
+        }
+    }
+
+    private func setupStep(_ number: String, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Text(number).font(.headline).foregroundStyle(colors.actionAccent)
+                .frame(width: 30, height: 30).background(colors.actionAccent.opacity(0.10), in: Circle())
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title).font(.headline)
+                Text(detail).foregroundStyle(colors.muted)
+            }
+        }
+    }
+}
+
+private struct StarterIdeaView: View {
+    @Environment(\.phoneColors) private var colors
+    @Environment(\.dismiss) private var dismiss
+    @Binding var savedIdea: String
+    @State private var text: String
+    @State private var confirmDiscard = false
+    @FocusState private var focused: Bool
+
+    init(idea: Binding<String>) {
+        _savedIdea = idea
+        _text = State(initialValue: idea.wrappedValue)
+    }
+
+    private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var tooLong: Bool { trimmed.utf16.count > SuggestedTaskDetails.captureLimit }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Save an idea").font(.headline)
+                Spacer()
+                Button("Cancel") { dismiss() }.accessibilityIdentifier("starterIdeaCancel")
+            }
+            .padding(20).contentShape(Rectangle()).onTapGesture { focused = false }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Write or dictate a task to come back to. It stays on this device until you choose to create a task in your Mac workspace.")
+                        .foregroundStyle(colors.muted)
+                    TextEditor(text: $text).focused($focused).scrollContentBackground(.hidden)
+                        .padding(12).frame(height: 280)
+                        .background(colors.card, in: RoundedRectangle(cornerRadius: 20))
+                        .accessibilityLabel("Your idea").accessibilityIdentifier("starterIdeaEditor")
+                    if tooLong { Text("Keep your idea to 2,000 characters.").font(.footnote).foregroundStyle(colors.danger) }
+                    HStack {
+                        Spacer()
+                        Button("Save idea") { savedIdea = trimmed; dismiss() }
+                            .disabled(trimmed.isEmpty || tooLong).accessibilityIdentifier("starterIdeaSave")
+                    }
+                    if !savedIdea.isEmpty {
+                        Button("Discard saved idea", role: .destructive) { confirmDiscard = true }
+                            .accessibilityIdentifier("starterIdeaDiscard")
+                    }
+                }.padding(20)
+            }
+            .scrollDismissesKeyboard(.interactively)
+        }
+        .buttonStyle(PhoneActionButtonStyle()).foregroundStyle(colors.text)
+        .background(colors.canvas.ignoresSafeArea()).tint(colors.actionAccent)
+        .phoneConfirmation("Discard this saved idea?", isPresented: $confirmDiscard,
+                           message: "This removes the idea saved on this device.", confirm: "Discard idea", role: .destructive) {
+            savedIdea = ""; dismiss()
+        }
+        .onAppear { focused = true }
     }
 }
 
@@ -574,6 +787,7 @@ private struct SyncSettingsView: View {
     @AppStorage("appearanceTheme") private var theme = OpenTalonTheme.system
     @State private var showTips = false
     @State private var showTechnicalSupport = false
+    @State private var showIntroduction = false
     @AppStorage(PhoneWorkspace.pickupAlertsKey) private var pickupAlerts = false
     @State private var notificationDenied = false
 
@@ -750,6 +964,11 @@ private struct SyncSettingsView: View {
 
     private var helpSection: some View {
         Section("Support") {
+            Button { showIntroduction = true } label: {
+                settingsActionLabel("Getting started", systemImage: "hand.wave")
+            }
+            .accessibilityIdentifier("settingsGettingStarted")
+            .fullScreenCover(isPresented: $showIntroduction) { PhoneIntroduction { showIntroduction = false } }
             Button { showTechnicalSupport = true } label: {
                 settingsActionLabel("Open a Support Ticket", systemImage: "headphones")
             }
@@ -3330,6 +3549,12 @@ private struct CaptureView: View {
     @State private var draftRequest: Task<Void, Never>?
     @State private var saving = false
     @State private var error: String?
+    private let onQueued: () -> Void
+
+    init(initialIdea: String = "", onQueued: @escaping () -> Void = {}) {
+        _idea = State(initialValue: initialIdea)
+        self.onQueued = onQueued
+    }
 
     private var trimmedIdea: String { idea.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var editedTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -3529,6 +3754,7 @@ private struct CaptureView: View {
             agent: agent, model: model, dispatchComment: comment, newProjectName: task.newProjectName,
             planMarkdown: task.planMarkdown, issueType: task.issueType
         ))
+        onQueued()
     }
 }
 

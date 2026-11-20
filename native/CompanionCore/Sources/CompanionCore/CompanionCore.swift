@@ -28,6 +28,35 @@ public enum TaskCreationOrder {
     }
 }
 
+public enum DoneOrder: String, CaseIterable, Codable, Identifiable, Sendable {
+    case recent, oldest, manual
+
+    public var id: Self { self }
+
+    public var title: String {
+        switch self {
+        case .recent: "Recently completed"
+        case .oldest: "Oldest completed"
+        case .manual: "Manual order"
+        }
+    }
+
+    public func ordered<Item: Identifiable>(_ items: [Item], completionDate: (Item) -> Date?,
+                                            creationDate: (Item) -> Date?) -> [Item] where Item.ID == String {
+        guard self != .manual else { return items }
+        return items.map { (item: $0, completion: completionDate($0), creation: creationDate($0)) }
+            .sorted { left, right in
+                if (left.completion != nil) != (right.completion != nil) { return left.completion != nil }
+                let first = left.completion ?? left.creation
+                let second = right.completion ?? right.creation
+                if let first, let second, first != second { return self == .recent ? first > second : first < second }
+                if (first != nil) != (second != nil) { return first != nil }
+                return left.item.id < right.item.id
+            }
+            .map(\.item)
+    }
+}
+
 public struct PhoneProject: Codable, Identifiable, Sendable {
     public let id: String
     public let name: String
@@ -103,6 +132,7 @@ public struct PhoneTask: Codable, Identifiable, Sendable {
     public let assigned: Bool
     public let taskKey: String?
     public let createdAt: Date?
+    public let completedAt: Date?
     public let archivedAt: Date?
     public let agentPickup: PhoneAgentPickup?
     public let agentDispatchError: String?
@@ -112,7 +142,8 @@ public struct PhoneTask: Codable, Identifiable, Sendable {
                 status: Status, priority: Priority, dueDate: String?, revision: Int, assigned: Bool,
                 taskKey: String? = nil, createdAt: Date? = nil, archivedAt: Date? = nil,
                 agentPickup: PhoneAgentPickup? = nil, agentDispatchError: String? = nil,
-                position: Int? = nil, planMarkdown: String? = nil, issueType: IssueType? = nil) {
+                position: Int? = nil, planMarkdown: String? = nil, issueType: IssueType? = nil,
+                completedAt: Date? = nil) {
         self.id = id
         self.projectID = projectID
         self.title = title
@@ -127,6 +158,7 @@ public struct PhoneTask: Codable, Identifiable, Sendable {
         self.assigned = assigned
         self.taskKey = taskKey
         self.createdAt = createdAt
+        self.completedAt = completedAt
         self.archivedAt = archivedAt
         self.agentPickup = agentPickup
         self.agentDispatchError = agentDispatchError
@@ -196,6 +228,7 @@ public struct PhoneSnapshot: Codable, Sendable {
     private let taskPlans: Bool?
     private let taskTypes: Bool?
     private let commentActivity: Bool?
+    private let completionDates: Bool?
     public let historyByTask: [String: TaskHistoryPage]?
     public let activityByTask: [String: TaskActivityPage]?
 
@@ -208,7 +241,8 @@ public struct PhoneSnapshot: Codable, Sendable {
                 captureProjectID: String? = nil, macName: String? = nil,
                 supportsTaskOverrides: Bool = false, supportsBulkArchive: Bool = false,
                 supportsTaskReordering: Bool = false, supportsTaskOrganization: Bool = false,
-                supportsTaskPlans: Bool = false, supportsTaskTypes: Bool = false, historyByTask: [String: TaskHistoryPage]? = nil, activityByTask: [String: TaskActivityPage]? = nil, supportsCommentActivity: Bool = false) {
+                supportsTaskPlans: Bool = false, supportsTaskTypes: Bool = false, historyByTask: [String: TaskHistoryPage]? = nil, activityByTask: [String: TaskActivityPage]? = nil, supportsCommentActivity: Bool = false,
+                includesCompletionDates: Bool = false) {
         version = 1
         self.workspaceID = workspaceID
         self.revision = revision
@@ -235,6 +269,7 @@ public struct PhoneSnapshot: Codable, Sendable {
         self.historyByTask = historyByTask
         self.activityByTask = activityByTask
         commentActivity = supportsCommentActivity ? true : nil
+        completionDates = includesCompletionDates ? true : nil
     }
 
     public var supportsNoteEditing: Bool { noteEditing == true }
@@ -250,6 +285,7 @@ public struct PhoneSnapshot: Codable, Sendable {
     public var supportsTaskTypes: Bool { taskTypes == true }
 
     var projectionVersion: Int {
+        if completionDates == true { return 20 }
         if supportsCommentActivity { return 19 }
         if activityByTask != nil { return 18 }
         if historyByTask != nil { return 17 }

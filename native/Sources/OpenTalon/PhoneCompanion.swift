@@ -129,7 +129,8 @@ final class PhoneCompanion {
                 taskKey: item.taskKey, createdAt: item.creationDate,
                 archivedAt: item.archivedAt.flatMap(TaskCreationOrder.date(from:)),
                 agentPickup: workspace.agentAssignments[item.id].flatMap { pickups[$0] },
-                agentDispatchError: error, position: item.position, planMarkdown: item.planMarkdown, issueType: item.kind
+                agentDispatchError: error, position: item.position, planMarkdown: item.planMarkdown, issueType: item.kind,
+                completedAt: item.completionDate
             )
         }
         return PhoneSnapshot(workspaceID: identity.workspaceID, revision: workspace.revision,
@@ -144,7 +145,8 @@ final class PhoneCompanion {
                                                        title: $0.title, revision: $0.revision) },
                              captureProjectID: workspace.selectedBoard, macName: Host.current().localizedName ?? "Mac",
                              supportsTaskOverrides: true, supportsBulkArchive: true, supportsTaskReordering: true,
-                             supportsTaskOrganization: true, supportsTaskPlans: true, supportsTaskTypes: true, historyByTask: snapshot.historyByTask, activityByTask: snapshot.activityByTask, supportsCommentActivity: true)
+                             supportsTaskOrganization: true, supportsTaskPlans: true, supportsTaskTypes: true, historyByTask: snapshot.historyByTask, activityByTask: snapshot.activityByTask, supportsCommentActivity: true,
+                             includesCompletionDates: true)
     }
 
     private func apply(_ request: PhoneRequest, service: Service) async throws -> PhoneReceipt {

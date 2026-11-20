@@ -15,6 +15,53 @@ function fixture(t) {
   return { store, folder, write }
 }
 
+test('native completion dates survive edits and track reopen and re-complete without changing lane positions', async t => {
+  const { store, write } = fixture(t)
+  const { beginIfMissing } = require('./task-history.cjs')
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-20T12:00:00.000Z') })
+  const boardId = store.boards()[0].id
+  const create = (title, status) => write('create_task', { boardId, title, status }).then(result => result.task)
+  const move = (task, status) => write('move_task', { id: task.id, status, expectedRevision: store.task(task.id).revision })
+  const snapshot = () => store.snapshot({ includeRecordedCompletions: true }).tasks
+  const completion = task => snapshot().find(item => item.id === task.id).recordedCompletionAt
+  const activeOrder = () => snapshot().filter(item => item.status === 'To do').map(item => [item.id, item.position])
+
+  const legacy = await create('Migrated Done', 'Done')
+  store.db.prepare('DELETE FROM task_history WHERE task_id=?').run(legacy.id)
+  beginIfMissing(store, legacy)
+  assert.ok(store.task(legacy.id).completedAt)
+  assert.equal(completion(legacy), null)
+
+  const older = await create('Older')
+  const recent = await create('Recent')
+  const firstActive = await create('First active')
+  const secondActive = await create('Second active')
+  // Older backups can have an active task with no journal entries at all.
+  store.db.prepare('DELETE FROM task_history WHERE task_id=?').run(older.id)
+  t.mock.timers.tick(1000)
+  await move(older, 'Done')
+  const originalCompletion = completion(older)
+  assert.equal(originalCompletion, '2026-10-20T12:00:01.000Z')
+  t.mock.timers.tick(1000)
+  await move(recent, 'Done')
+  assert.ok(completion(recent) > originalCompletion)
+
+  const originalActiveOrder = activeOrder()
+  assert.deepEqual(originalActiveOrder.map(([id]) => id), [firstActive.id, secondActive.id])
+  t.mock.timers.tick(1000)
+  await write('update_task', { id: older.id, expectedRevision: store.task(older.id).revision, notes: 'Review added after completion' })
+  assert.ok(store.task(older.id).updatedAt > completion(recent))
+  assert.equal(completion(older), originalCompletion)
+  assert.deepEqual(activeOrder(), originalActiveOrder)
+
+  await move(older, 'To do')
+  assert.equal(completion(older), null)
+  t.mock.timers.tick(1000)
+  await move(older, 'Done')
+  assert.ok(completion(older) > completion(recent))
+  assert.deepEqual(activeOrder().map(([id]) => id), originalActiveOrder.map(([id]) => id))
+})
+
 test('Issue/Bug defaults, field edits, filters and history survive restarts and backups', async t => {
   const { store, folder, write } = fixture(t)
   const boardId = store.boards()[0].id

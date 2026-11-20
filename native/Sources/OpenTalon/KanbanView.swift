@@ -169,6 +169,8 @@ private struct ColumnView: View {
 
     @State private var scrollID: String?
 
+    private var usesCompletionOrder: Bool { status == .done && model.doneOrder != .manual }
+
     var body: some View {
         let items = model.column(status)
         VStack(spacing: 0) {
@@ -180,7 +182,7 @@ private struct ColumnView: View {
                             .dragFrame(.card(status, item.id))
                             .opacity(drag.source == item.id ? 0.48 : 1)
                             .overlay(alignment: drag.before ? .top : .bottom) {
-                                if drag.anchor == item.id && drag.source != item.id {
+                                if !usesCompletionOrder && drag.anchor == item.id && drag.source != item.id {
                                     Capsule().fill(palette.accent).frame(height: 3)
                                         .offset(y: drag.before ? -4 : 4).allowsHitTesting(false)
                                 }
@@ -196,6 +198,9 @@ private struct ColumnView: View {
             }
             .scrollPosition(id: $scrollID, anchor: .top)
             .defaultScrollAnchor(.top)
+            .onChange(of: items.first?.id) { previous, next in
+                if usesCompletionOrder, scrollID == previous { scrollID = next }
+            }
             .dragFrame(.well(status))
             .task(id: drag.edgeDirection(status)) {
                 let direction = drag.edgeDirection(status)
@@ -242,13 +247,32 @@ private struct ColumnView: View {
     }
 
     private func heading(_ count: Int) -> some View {
-        HStack(spacing: 7) {
+        @Bindable var model = model
+        return HStack(spacing: 7) {
             Image(systemName: status.symbol).foregroundStyle(status == .working ? palette.accent : palette.muted)
             Text(drag.target == status ? "Drop in \(status.rawValue)" : status.rawValue)
                 .fontWeight(.semibold)
                 .lineLimit(1)
             Text(count.formatted()).font(.system(size: 11)).foregroundStyle(palette.muted)
             Spacer(minLength: 0)
+            if status == .done {
+                Menu {
+                    Picker("Sort completed tasks", selection: $model.doneOrder) {
+                        ForEach(DoneOrder.allCases) { order in Text(order.title).tag(order) }
+                    }
+                } label: {
+                    Image(systemName: "arrow.up.arrow.down")
+                        .foregroundStyle(palette.muted)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help(model.doneOrder.title)
+                .accessibilityLabel("Sort completed tasks")
+                .accessibilityValue(model.doneOrder.title)
+                .accessibilityIdentifier("doneColumnSort")
+                .onChange(of: model.doneOrder) { scrollID = model.column(.done).first?.id }
+            }
             IconButton(symbol: "plus", label: "Add task in \(status.rawValue)") { model.newTask(status) }
                 .foregroundStyle(palette.muted)
         }

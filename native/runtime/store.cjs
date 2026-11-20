@@ -783,14 +783,19 @@ class Store {
         { current: record }
       )
   }
-  snapshot() {
+  snapshot({ includeRecordedCompletions = false } = {}) {
+    const tasks = this.db.prepare(`${taskSelect} ORDER BY position,id`).all().map(taskView)
+    if (includeRecordedCompletions) {
+      const completions = taskHistory.recordedCompletions(this)
+      for (const task of tasks) task.recordedCompletionAt = completions.get(task.id) ?? null
+    }
     return {
       version: 1,
       ...this.preferences(),
       preferencesRevision: this.get('preferencesRevision'),
       revision: this.revision(),
       boards: this.boards(),
-      tasks: this.db.prepare(`${taskSelect} ORDER BY position,id`).all().map(taskView),
+      tasks,
       agentRuns: this.agentJobs(),
       agentAssignments: this.agentAssignments(),
       allTasksOrder: this.allTasksOrder(),
@@ -888,6 +893,7 @@ class Store {
       boardId,
       status,
     })
+    if (status !== task.status) taskHistory.beginIfMissing(this, task)
     column.forEach((item, position) => {
       if (item.id === task.id || item.position !== position)
         this.saveTask({ ...item, position }, revision)

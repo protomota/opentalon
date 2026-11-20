@@ -30,6 +30,30 @@ function recordRevision(store, revision, action, origin, runId) {
     record(store, store.task(row.id), action, origin, runId)
 }
 
+function beginIfMissing(store, task) {
+  if (!store.db.prepare('SELECT 1 FROM task_history WHERE task_id=? LIMIT 1').get(task.id))
+    record(store, task, 'history_started', 'OpenTalon')
+}
+
+function recordedCompletions(store) {
+  // Older databases and backups seeded completed_at from updated_at. Require a
+  // recorded status change or creation before presenting it as a completion date.
+  const rows = store.db.prepare(`
+    SELECT task.id, task.completed_at FROM tasks AS task
+    JOIN task_history AS entry ON entry.id = (
+      SELECT history.id FROM task_history AS history
+      WHERE history.task_id = task.id
+        AND EXISTS (SELECT 1 FROM json_each(history.changes_json) WHERE value = 'status')
+      ORDER BY history.version DESC LIMIT 1
+    )
+    WHERE task.status = 'Done' AND task.completed_at IS NOT NULL
+      AND json_extract(entry.state_json, '$.status') = 'Done'
+      AND entry.action <> 'history_started'
+      AND (entry.version > 1 OR entry.action IN ('create_task', 'capture_task'))
+  `).all()
+  return new Map(rows.map(row => [row.id, row.completed_at]))
+}
+
 function migrate(store) {
   store.db.exec('BEGIN IMMEDIATE')
   try {
@@ -111,4 +135,4 @@ function validateRows(rows, tasks) {
   }
 }
 
-module.exports = { migrate, record, recordRevision, page, restore, validateRows }
+module.exports = { migrate, record, recordRevision, beginIfMissing, recordedCompletions, page, restore, validateRows }

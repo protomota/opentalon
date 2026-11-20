@@ -79,10 +79,12 @@ struct WorkItem: Codable, Identifiable, Equatable {
     let revision: Int
     let createdAt: String
     let updatedAt: String
+    let recordedCompletionAt: String?
 
     var write: [String: Any] { ["id": id, "expectedRevision": revision] }
     var reference: String { taskKey ?? id }
     var creationDate: Date? { TaskCreationOrder.date(from: createdAt) }
+    var completionDate: Date? { recordedCompletionAt.flatMap(TaskCreationOrder.date(from:)) }
     var late: Bool { dueDate.map { $0 <= CalendarDay.today } ?? false }
     var dueLabel: String? { dueDate.map(CalendarDay.label) }
 }

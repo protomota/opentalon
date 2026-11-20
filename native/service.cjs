@@ -177,9 +177,12 @@ function agentOptions() {
 
 async function privateAction(name, input) {
   switch (name) {
+    case 'snapshot':
+      validateAction(name, input, true)
+      return store.snapshot({ includeRecordedCompletions: true })
     case 'native_agent_options': return agentOptions()
     case 'native_phone_snapshot': {
-      const workspace = store.snapshot()
+      const workspace = store.snapshot({ includeRecordedCompletions: true })
       const commentsByTask = Object.create(null)
       for (const task of workspace.tasks.filter(task => !task.deleted)) {
         const comments = store.comments(task.id).filter(comment => comment.source === 'user')

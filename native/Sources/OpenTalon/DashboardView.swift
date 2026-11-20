@@ -2,7 +2,7 @@ import CompanionCore
 import SwiftUI
 
 private enum Attention: String, CaseIterable, Identifiable {
-    case urgent = "Urgent to-dos", all = "All to-dos", overdue = "Overdue", today = "Due today"
+    case urgent = "Urgent to-dos", all = "All to-dos", overdue = "Overdue", today = "Due today", done = "Done"
     var id: Self { self }
     func matches(_ item: WorkItem, today: String) -> Bool {
         switch self {
@@ -10,6 +10,7 @@ private enum Attention: String, CaseIterable, Identifiable {
         case .urgent: item.status == .todo && item.priority == .urgent
         case .overdue: item.dueDate.map { $0 < today } ?? false
         case .today: item.dueDate == today
+        case .done: item.status == .done
         }
     }
 }
@@ -54,9 +55,15 @@ struct DashboardView: View {
     @State private var limit = 6
 
     private var projects: [Board] { model.boards.filter { scope.isEmpty || $0.id == scope } }
-    private var active: [WorkItem] { model.tasks.filter { !$0.deleted && (scope.isEmpty || $0.boardId == scope) } }
+    private var active: [WorkItem] {
+        model.tasks.filter { !$0.deleted && $0.archivedAt == nil && (scope.isEmpty || $0.boardId == scope) }
+    }
     private var open: [WorkItem] { active.filter { $0.status != .done } }
     private var attention: [WorkItem] {
+        if filter == .done {
+            return DoneOrder.recent.ordered(active.filter { $0.status == .done },
+                                          completionDate: \.completionDate, creationDate: \.creationDate)
+        }
         let today = CalendarDay.today
         return open.filter { filter.matches($0, today: today) }.sorted {
             if $0.status == .todo || $1.status == .todo {
@@ -175,7 +182,7 @@ struct DashboardView: View {
         LazyVStack(spacing: 0) {
             HStack(spacing: 0) {
                 ForEach(Attention.allCases) { option in
-                    let count = open.filter { option.matches($0, today: CalendarDay.today) }.count
+                    let count = (option == .done ? active : open).filter { option.matches($0, today: CalendarDay.today) }.count
                     let selected = option == filter
                     let alert = (option == .overdue || option == .urgent) && count > 0
                     Button { show(option) } label: {
@@ -209,8 +216,9 @@ struct DashboardView: View {
             if attention.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "checkmark.circle").font(.system(size: 25))
-                    Text("You’re all caught up.").fontWeight(.medium)
-                    Text("Tasks that match this filter will appear here.").font(.caption)
+                    Text(filter == .done ? "No completed tasks yet." : "You’re all caught up.").fontWeight(.medium)
+                    Text(filter == .done ? "Completed tasks appear here for seven days, then move to Archive." :
+                            "Tasks that match this filter will appear here.").font(.caption)
                 }
                 .foregroundStyle(palette.muted)
                 .frame(maxWidth: .infinity)
@@ -222,8 +230,14 @@ struct DashboardView: View {
             }
             if !attention.isEmpty {
                 HStack {
-                    Text("Ignored tasks can be restored from Trash.")
-                        .font(.system(size: 11)).foregroundStyle(palette.muted)
+                    if filter == .done {
+                        Text("Recently completed first · Automatically archived after seven days.")
+                            .font(.system(size: 11)).foregroundStyle(palette.muted)
+                        Button("View Archive") { model.navigate(.archive) }
+                    } else {
+                        Text("Ignored tasks can be restored from Trash.")
+                            .font(.system(size: 11)).foregroundStyle(palette.muted)
+                    }
                     Spacer()
                     if attention.count > limit {
                         Button("Show more (\(attention.count - limit))") { limit += 6 }
@@ -340,11 +354,11 @@ struct DashboardView: View {
         }
         .font(.system(size: 11))
         .fixedSize()
-        if bucket == .urgent {
-            Button { show(.urgent) } label: { item.contentShape(Rectangle()) }
+        if bucket == .urgent || bucket == .done {
+            Button { show(bucket == .done ? .done : .urgent) } label: { item.contentShape(Rectangle()) }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Filter Urgent to-dos: \(count)")
-                .help("Show only Urgent tasks in To do")
+                .accessibilityLabel(bucket == .done ? "View Done tasks: \(count)" : "Filter Urgent to-dos: \(count)")
+                .help(bucket == .done ? "View recently completed tasks" : "Show only Urgent tasks in To do")
         } else {
             item
         }
@@ -559,43 +573,49 @@ private struct DashboardTask: View {
                         Text([model.projectName(item.boardId), item.status.rawValue, assigned ? "Agent task" : nil]
                             .compactMap { $0 }.joined(separator: "  ·  "))
                             .font(.system(size: 10)).foregroundStyle(palette.muted).lineLimit(1)
-                        if let date = item.creationDate {
-                            Text("Created \(date.formatted(date: .abbreviated, time: .omitted))")
+                        if let date = item.status == .done ? item.completionDate : item.creationDate {
+                            Text("\(item.status == .done ? "Completed" : "Created") \(date.formatted(date: .abbreviated, time: .omitted))")
                                 .font(.system(size: 10)).foregroundStyle(palette.muted)
                         }
                     }
                     Spacer(minLength: 0)
                 }
+                .frame(minWidth: 180, maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Open \(item.title)")
-            if let label = item.dueLabel {
+            if item.status != .done, let label = item.dueLabel {
                 Label(item.dueDate == CalendarDay.today ? "Due today" : item.late ? "Overdue · \(label)" : "Due \(label)",
                       systemImage: "calendar")
                     .font(.system(size: 10))
                     .foregroundStyle(item.late ? palette.danger : palette.muted)
                     .lineLimit(1)
             }
-            BoardDropdown(selection: Binding(get: { item.priority }, set: { priority in
-                model.perform {
-                    var input = item.write
-                    input["priority"] = priority.rawValue
-                    try await model.mutate("update_task", input)
-                }
-            }), title: "Priority for \(item.title)", symbol: "chart.bar.fill", choices: Priority.allCases,
-                          compact: true, symbolColor: item.priority.color(palette.dark), label: \.label)
-                .frame(width: 128)
+            if item.status != .done {
+                BoardDropdown(selection: Binding(get: { item.priority }, set: { priority in
+                    model.perform {
+                        var input = item.write
+                        input["priority"] = priority.rawValue
+                        try await model.mutate("update_task", input)
+                    }
+                }), title: "Priority for \(item.title)", symbol: "chart.bar.fill", choices: Priority.allCases,
+                              compact: true, symbolColor: item.priority.color(palette.dark), label: \.label)
+                    .frame(width: 128)
+            }
             Button {
-                if assigned { model.select(item) }
+                if item.status == .done { model.move(item, to: .todo) }
+                else if assigned { model.select(item) }
                 else { model.move(item, to: .done) }
             } label: {
-                Label(assigned ? "Review" : "Complete", systemImage: assigned ? "arrow.up.right" : "checkmark")
+                Label(item.status == .done ? "Reopen" : assigned ? "Review" : "Complete",
+                      systemImage: item.status == .done ? "arrow.uturn.backward" : assigned ? "arrow.up.right" : "checkmark")
                     .font(.system(size: 11))
                     .foregroundStyle(palette.muted)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(assigned ? "Review \(item.title)" : "Complete \(item.title)")
+            .fixedSize()
+            .accessibilityLabel(item.status == .done ? "Reopen \(item.title)" : assigned ? "Review \(item.title)" : "Complete \(item.title)")
             IconButton(symbol: "trash", label: "Move \(item.title) to Trash") { model.trash(item) }
         }
         .padding(.horizontal, 18)

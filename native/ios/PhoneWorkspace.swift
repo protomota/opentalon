@@ -589,25 +589,28 @@ final class PhoneWorkspace {
     }
 
     func displayedStatus(for task: PhoneTask) -> PhoneTask.Status {
-        pendingStatus(for: task)?.status ?? task.status
+        pendingStatus(for: task).status
     }
 
-    private func pendingStatus(for task: PhoneTask) -> (status: PhoneTask.Status, date: Date)? {
-        for request in taskChanges(for: task.id).reversed() {
-            switch request.action {
+    private func pendingStatus(for task: PhoneTask) -> (status: PhoneTask.Status, completedAt: Date?) {
+        var status = task.status
+        var completedAt: Date?
+        for request in taskChanges(for: task.id) {
+            let next: PhoneTask.Status? = switch request.action {
             case .restoreRevision(_, let id, _):
-                if let entry = historyPage(for: task.id)?.entries.first(where: { $0.id == id }) {
-                    return (entry.state.restoredStatus, request.createdAt)
-                }
-            case .organizeTask(_, .active): return (.todo, request.createdAt)
-            case .complete, .forceComplete: return (.done, request.createdAt)
-            case .send: return (.sent, request.createdAt)
+                historyPage(for: task.id)?.entries.first(where: { $0.id == id })?.state.restoredStatus
+            case .organizeTask(_, .active): .todo
+            case .complete, .forceComplete: .done
+            case .send: .sent
             case .editField(_, _, .status(let status, _, _, _)),
-                 .setField(_, _, .status(let status, _, _, _)): return (status, request.createdAt)
-            default: break
+                 .setField(_, _, .status(let status, _, _, _)): status
+            default: nil
             }
+            guard let next, next != status else { continue }
+            status = next
+            completedAt = status == .done ? request.createdAt : nil
         }
-        return nil
+        return (status, completedAt)
     }
 
     func displayedPriority(for task: PhoneTask) -> PhoneTask.Priority {
@@ -643,27 +646,20 @@ final class PhoneWorkspace {
         let completedAt: Date?
         let completionPending: Bool
         var id: String { task.id }
+        var createdAt: Date? { task.createdAt }
     }
 
-    var completedTasks: [CompletedTask] {
+    func completedTasks(in tasks: [PhoneTask]? = nil, order: DoneOrder) -> [CompletedTask] {
         guard let snapshot else { return [] }
         let trashedIDs = Set((snapshot.trashedTasks ?? []).map(\.id))
-        return visibleTasks.compactMap { task -> CompletedTask? in
+        let completed = (tasks ?? visibleTasks).compactMap { task -> CompletedTask? in
             guard !trashedIDs.contains(task.id), !isArchived(task) else { return nil }
             let pending = pendingStatus(for: task)
-            guard (pending?.status ?? task.status) == .done else { return nil }
-
-            // Snapshots carry one history entry per task. Only a recorded status change dates a completion.
-            var completedAt = pending?.date
-            if completedAt == nil, let entry = snapshot.historyByTask?[task.id]?.entries.first,
-               entry.version > 1, entry.state.status == .done, entry.changedFields.contains("status") {
-                completedAt = TaskCreationOrder.date(from: entry.savedAt)
-            }
-            return CompletedTask(task: task, completedAt: completedAt, completionPending: pending != nil)
-        }.sorted { left, right in
-            (left.completedAt ?? .distantPast, left.task.createdAt ?? .distantPast, left.id) >
-                (right.completedAt ?? .distantPast, right.task.createdAt ?? .distantPast, right.id)
+            guard pending.status == .done else { return nil }
+            return CompletedTask(task: task, completedAt: pending.completedAt ?? task.completedAt,
+                                 completionPending: pending.completedAt != nil)
         }
+        return order.ordered(completed, completionDate: \.completedAt, creationDate: \.createdAt)
     }
 
     var pendingArchiveRemovals: [String: Bool] {

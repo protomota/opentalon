@@ -2,6 +2,24 @@ import Foundation
 import Testing
 @testable import CompanionCore
 
+@Test func doneOrderUsesRecordedCompletionAndStableLegacyFallback() {
+    func task(_ id: String, created: Double?, completed: Double? = nil) -> PhoneTask {
+        PhoneTask(id: id, projectID: "project", title: id, notes: "", definitionOfDone: "", status: .done,
+                  priority: .none, dueDate: nil, revision: 1, assigned: false,
+                  createdAt: created.map(Date.init(timeIntervalSinceReferenceDate:)),
+                  completedAt: completed.map(Date.init(timeIntervalSinceReferenceDate:)))
+    }
+    let items = [task("legacy-new", created: 100), task("legacy-undated", created: nil),
+                 task("completed-last", created: 1, completed: 90), task("legacy-first", created: 50),
+                 task("completed-first", created: 30, completed: 40)]
+    #expect(DoneOrder.recent.ordered(items, completionDate: \.completedAt, creationDate: \.createdAt).map(\.id)
+            == ["completed-last", "completed-first", "legacy-new", "legacy-first", "legacy-undated"])
+    #expect(DoneOrder.oldest.ordered(items, completionDate: \.completedAt, creationDate: \.createdAt).map(\.id)
+            == ["completed-first", "completed-last", "legacy-first", "legacy-new", "legacy-undated"])
+    #expect(DoneOrder.manual.ordered(items, completionDate: \.completedAt, creationDate: \.createdAt).map(\.id)
+            == items.map(\.id))
+}
+
 @Test func markdownCodeFencesKeepNestedMarkersInsideTheCodeBlock() {
     let fence = PlanCodeFence("````swift")!
     #expect(!fence.closes(with: "```"))
@@ -310,6 +328,19 @@ import Testing
     }
     #expect(current.tasks.first?.position == 2)
     #expect(current.supportsTaskReordering)
+    #expect(current.tasks.first?.completedAt == nil)
+    let completedAt = Date(timeIntervalSinceReferenceDate: 456)
+    let done = PhoneTask(id: "test", projectID: "project", title: "Task", notes: "", definitionOfDone: "",
+                         status: .done, priority: .urgent, dueDate: nil, revision: 7, assigned: false,
+                         createdAt: createdAt, completedAt: completedAt)
+    let withCompletionDate = PhoneSnapshot(workspaceID: workspaceID, revision: 7, projects: [], tasks: [done],
+                                           supportsTaskReordering: true, includesCompletionDates: true)
+    try await transport.publish(withCompletionDate)
+    guard case .updated(let completed) = try await transport.snapshot(newerThan: current) else {
+        Issue.record("An unchanged workspace revision suppressed recorded completion dates.")
+        return
+    }
+    #expect(completed.tasks.first?.completedAt == completedAt)
 }
 #endif
 

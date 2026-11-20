@@ -1356,10 +1356,11 @@ private struct PhoneDoneView: View {
     @Environment(PhoneWorkspace.self) private var workspace
     @Environment(\.phoneColors) private var colors
     @State private var search = ""
+    @AppStorage("done.workspaceOrder") private var order = DoneOrder.recent
 
     var body: some View {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        let tasks = workspace.completedTasks.filter { item in
+        let tasks = workspace.completedTasks(order: order).filter { item in
             guard !query.isEmpty else { return true }
             let task = item.task
             let reference = workspace.hasPendingProjectMove(for: task) ? "" : task.displayTaskID ?? ""
@@ -1400,6 +1401,11 @@ private struct PhoneDoneView: View {
             }
         }
         .modifier(PhoneListAppearance())
+        .toolbar {
+            PhoneActionToolbarItem(placement: .topBarTrailing) {
+                PhoneDoneSortMenu(order: $order, allowsManualOrder: false, iconOnly: true)
+            }
+        }
         .searchable(text: $search, prompt: "Search completed tasks")
         .refreshable { await workspace.sync() }
         .navigationDestination(for: String.self) { taskID in
@@ -1416,6 +1422,32 @@ private struct PhoneDoneView: View {
                 .disabled(workspace.syncing)
         }
         .listRowBackground(colors.card)
+    }
+}
+
+private struct PhoneDoneSortMenu: View {
+    @Binding var order: DoneOrder
+    let allowsManualOrder: Bool
+    var iconOnly = false
+
+    var body: some View {
+        Menu {
+            Picker("Sort completed tasks", selection: $order) {
+                ForEach(allowsManualOrder ? DoneOrder.allCases : [.recent, .oldest]) { option in
+                    Text(option.title).tag(option)
+                }
+            }
+        } label: {
+            if iconOnly {
+                Image(systemName: "arrow.up.arrow.down")
+                    .frame(minWidth: 32, minHeight: 32)
+            } else {
+                PhoneActionLabel(title: LocalizedStringKey(order.title), systemImage: "arrow.up.arrow.down")
+            }
+        }
+        .accessibilityLabel("Sort completed tasks")
+        .accessibilityValue(order.title)
+        .accessibilityIdentifier("doneSort")
     }
 }
 
@@ -1906,6 +1938,7 @@ private struct ProjectTasks: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("projects.taskSort") private var sort = Sort.defaultOrder
+    @AppStorage("projects.doneOrder") private var doneOrder = DoneOrder.recent
     @State private var editMode: EditMode = .inactive
     @State private var highlightedLane: PhoneTask.Status?
     @State private var highlightedTaskID: String?
@@ -1916,7 +1949,12 @@ private struct ProjectTasks: View {
     private let statuses: [PhoneTask.Status] = [.todo, .sent, .working, .done]
 
     private var canReorder: Bool {
-        sort == .defaultOrder && workspace.snapshot?.supportsTaskReordering == true
+        reorderable(.todo) || reorderable(.done)
+    }
+
+    private func reorderable(_ status: PhoneTask.Status) -> Bool {
+        guard workspace.snapshot?.supportsTaskReordering == true else { return false }
+        return status == .done ? doneOrder == .manual : sort == .defaultOrder
     }
 
     var body: some View {
@@ -1948,12 +1986,22 @@ private struct ProjectTasks: View {
                     ForEach(statuses, id: \.self) { status in
                         let items = items(for: status, in: tasks)
                         if !items.isEmpty {
-                            Section(status.rawValue) {
+                            Section {
                                 ForEach(items) { TaskLink(task: $0, showProject: false) }
                                     .onMove { indices, destination in
                                         reorderTasks(items, from: indices, to: destination, status: status)
                                     }
-                                    .moveDisabled(!canReorder)
+                                    .moveDisabled(!reorderable(status))
+                            } header: {
+                                if status == .done {
+                                    HStack {
+                                        Text(status.rawValue)
+                                        Spacer()
+                                        PhoneDoneSortMenu(order: $doneOrder, allowsManualOrder: true)
+                                    }
+                                } else {
+                                    Text(status.rawValue)
+                                }
                             }
                         }
                     }
@@ -2072,16 +2120,20 @@ private struct ProjectTasks: View {
     }
 
     private func items(for status: PhoneTask.Status, in tasks: [PhoneTask]) -> [PhoneTask] {
+        if status == .done {
+            let completed = workspace.completedTasks(in: tasks, order: doneOrder).map(\.task)
+            return doneOrder == .manual ? workspace.manualTaskOrder(completed, projectID: project.id, status: .done) : completed
+        }
         let matching = tasks.filter { workspace.displayedStatus(for: $0) == status }
         if sort == .newest { return workspace.newestTasks(matching) }
         if sort == .urgency { return workspace.orderedTasks(matching, byPriority: true) }
-        if canReorder { return workspace.manualTaskOrder(matching, projectID: project.id, status: status) }
+        if reorderable(status) { return workspace.manualTaskOrder(matching, projectID: project.id, status: status) }
         return status == .todo ? workspace.orderedTasks(matching) : matching
     }
 
     private func reorderTasks(_ items: [PhoneTask], from indices: IndexSet, to destination: Int,
                               status: PhoneTask.Status) {
-        guard canReorder, items.count > 1, indices.count == 1, let index = indices.first else { return }
+        guard reorderable(status), items.count > 1, indices.count == 1, let index = indices.first else { return }
         let task = items[index]
         var reordered = items
         reordered.move(fromOffsets: indices, toOffset: destination)
@@ -2091,7 +2143,7 @@ private struct ProjectTasks: View {
     }
 
     private func queueReorder(_ id: String, status: PhoneTask.Status, anchorID: String, before: Bool) {
-        guard canReorder, id != anchorID else { return }
+        guard reorderable(status), id != anchorID else { return }
         do {
             moveError = nil
             try withAnimation(reduceMotion ? nil : .snappy(duration: 0.30)) {
@@ -2112,6 +2164,10 @@ private struct ProjectTasks: View {
                 Text(status.rawValue).font(.subheadline.weight(.semibold)).accessibilityAddTraits(.isHeader)
                 Text(items.count, format: .number).font(.caption.monospacedDigit())
                     .foregroundStyle(colors.muted)
+                if status == .done {
+                    Spacer(minLength: 0)
+                    PhoneDoneSortMenu(order: $doneOrder, allowsManualOrder: true, iconOnly: true)
+                }
             }
             .padding(.bottom, 4)
             ScrollView {
@@ -2142,7 +2198,7 @@ private struct ProjectTasks: View {
                                     .environment(\.phoneColors, colors)
                                     .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 12))
                                 }
-                            if canReorder {
+                            if reorderable(status) {
                                 draggableCard
                                     .onDrop(of: [BoardTaskDrag.contentType], isTargeted: Binding(
                                         get: { highlightedTaskID == task.id },
@@ -2228,7 +2284,7 @@ private struct ProjectTasks: View {
                   $0.id == payload.taskID && !workspace.isArchived($0) && !workspace.isTrashed($0) && workspace.displayedProject(for: $0) == project.id
               }) else { return }
         if workspace.displayedStatus(for: task) == status {
-            guard canReorder else { return }
+            guard reorderable(status) else { return }
             let column = items(for: status, in: snapshot.tasks.filter {
                 !workspace.isArchived($0) && !workspace.isTrashed($0) && workspace.displayedProject(for: $0) == project.id
             })

@@ -22,6 +22,7 @@ enum WorkspaceSheet: Identifiable {
 struct ViewOptions: Codable {
     var priority: Priority?
     var sort: String = BoardSort.manual.rawValue
+    var doneOrder: DoneOrder?
 }
 
 struct Notice: Identifiable {
@@ -100,6 +101,10 @@ final class WorkspaceModel {
     var sort: BoardSort {
         get { BoardSort(rawValue: options[page.storageKey]?.sort ?? "") ?? .manual }
         set { updateOptions { $0.sort = newValue.rawValue } }
+    }
+    var doneOrder: DoneOrder {
+        get { options[page.storageKey]?.doneOrder ?? .recent }
+        set { updateOptions { $0.doneOrder = newValue } }
     }
     var priority: Priority? {
         get { options[page.storageKey]?.priority }
@@ -236,7 +241,12 @@ final class WorkspaceModel {
         let base = tasks.filter {
             !$0.deleted && $0.archivedAt == nil && $0.status == status && (boardId == nil || $0.boardId == boardId)
         }
-        if (sorting ?? sort) == .newest {
+        if status == .done, sorting == nil, doneOrder != .manual {
+            return doneOrder.ordered(base.filter { !filtered || matches($0) },
+                                     completionDate: \.completionDate, creationDate: \.creationDate)
+        }
+        let selectedSort = sorting ?? (status == .done ? .manual : sort)
+        if selectedSort == .newest {
             return newestFirst(base.filter { !filtered || matches($0) })
         }
         if status == .todo && sorting == nil {
@@ -253,7 +263,6 @@ final class WorkspaceModel {
             ($0.position, $0.id) < ($1.position, $1.id)
         }
         let ordered = page == .all ? orderAcrossProjects(boardOrder) : boardOrder
-        let selectedSort = sorting ?? sort
         return ordered.enumerated()
             .filter { !filtered || matches($0.element) }
             .sorted {
@@ -335,15 +344,21 @@ final class WorkspaceModel {
             move(item, to: status)
             return true
         }
-        let sorted = sort != .manual && item.status == status
+        if status == .done, doneOrder != .manual {
+            guard item.status != .done else { return false }
+            move(item, to: .done)
+            return true
+        }
+        let selectedSort = status == .done ? .manual : sort
+        let sorted = selectedSort != .manual && item.status == status
         let all = page == .all
         guard all || sorted else {
-            move(item, to: status, anchor: sort == .manual ? anchor : nil, before: before)
+            move(item, to: status, anchor: selectedSort == .manual ? anchor : nil, before: before)
             return true
         }
         let key = page.storageKey
-        let useAnchor = sorted || sort == .manual ? anchor : nil
-        var ids = column(status, filtered: false, sorting: sorted ? sort : .manual).map(\.id).filter { $0 != id }
+        let useAnchor = sorted || selectedSort == .manual ? anchor : nil
+        var ids = column(status, filtered: false, sorting: sorted ? selectedSort : .manual).map(\.id).filter { $0 != id }
         let index = useAnchor.flatMap { ids.firstIndex(of: $0) }.map { $0 + (before ? 0 : 1) } ?? ids.endIndex
         ids.insert(id, at: index)
         var fields: [String: Any] = ["status": status.rawValue, "expectedRevision": workspace.revision, "taskIds": ids]

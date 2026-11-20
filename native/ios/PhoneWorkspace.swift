@@ -589,19 +589,25 @@ final class PhoneWorkspace {
     }
 
     func displayedStatus(for task: PhoneTask) -> PhoneTask.Status {
+        pendingStatus(for: task)?.status ?? task.status
+    }
+
+    private func pendingStatus(for task: PhoneTask) -> (status: PhoneTask.Status, date: Date)? {
         for request in taskChanges(for: task.id).reversed() {
             switch request.action {
             case .restoreRevision(_, let id, _):
-                if let entry = historyPage(for: task.id)?.entries.first(where: { $0.id == id }) { return entry.state.restoredStatus }
-            case .organizeTask(_, .active): return .todo
-            case .complete, .forceComplete: return .done
-            case .send: return .sent
+                if let entry = historyPage(for: task.id)?.entries.first(where: { $0.id == id }) {
+                    return (entry.state.restoredStatus, request.createdAt)
+                }
+            case .organizeTask(_, .active): return (.todo, request.createdAt)
+            case .complete, .forceComplete: return (.done, request.createdAt)
+            case .send: return (.sent, request.createdAt)
             case .editField(_, _, .status(let status, _, _, _)),
-                 .setField(_, _, .status(let status, _, _, _)): return status
+                 .setField(_, _, .status(let status, _, _, _)): return (status, request.createdAt)
             default: break
             }
         }
-        return task.status
+        return nil
     }
 
     func displayedPriority(for task: PhoneTask) -> PhoneTask.Priority {
@@ -631,6 +637,34 @@ final class PhoneWorkspace {
     func isTrashed(_ task: PhoneTask) -> Bool { pendingArchiveRemovals[task.id] != nil }
 
     var visibleTasks: [PhoneTask] { (snapshot?.tasks ?? []).filter { !isTrashed($0) } }
+
+    struct CompletedTask: Identifiable {
+        let task: PhoneTask
+        let completedAt: Date?
+        let completionPending: Bool
+        var id: String { task.id }
+    }
+
+    var completedTasks: [CompletedTask] {
+        guard let snapshot else { return [] }
+        let trashedIDs = Set((snapshot.trashedTasks ?? []).map(\.id))
+        return visibleTasks.compactMap { task -> CompletedTask? in
+            guard !trashedIDs.contains(task.id), !isArchived(task) else { return nil }
+            let pending = pendingStatus(for: task)
+            guard (pending?.status ?? task.status) == .done else { return nil }
+
+            // Snapshots carry one history entry per task. Only a recorded status change dates a completion.
+            var completedAt = pending?.date
+            if completedAt == nil, let entry = snapshot.historyByTask?[task.id]?.entries.first,
+               entry.version > 1, entry.state.status == .done, entry.changedFields.contains("status") {
+                completedAt = TaskCreationOrder.date(from: entry.savedAt)
+            }
+            return CompletedTask(task: task, completedAt: completedAt, completionPending: pending != nil)
+        }.sorted { left, right in
+            (left.completedAt ?? .distantPast, left.task.createdAt ?? .distantPast, left.id) >
+                (right.completedAt ?? .distantPast, right.task.createdAt ?? .distantPast, right.id)
+        }
+    }
 
     var pendingArchiveRemovals: [String: Bool] {
         var removals: [String: Bool] = [:]

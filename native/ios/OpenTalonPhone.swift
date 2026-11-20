@@ -285,7 +285,7 @@ private final class PhoneNotificationDelegate: NSObject, UIApplicationDelegate, 
 
 struct CompanionHome: View {
     @State private var showAssistant = false
-    private enum Page { case today, projects, queue, settings }
+    private enum Page { case today, projects, done, queue, settings }
 
     @Environment(PhoneWorkspace.self) private var workspace
     @Environment(\.colorScheme) private var systemScheme
@@ -333,6 +333,16 @@ struct CompanionHome: View {
             .safeAreaInset(edge: .bottom, spacing: 0) { taskToast }
             .tabItem { tabLabel("Projects", systemImage: "square.grid.2x2", destination: .projects, colors: colors) }
             .tag(Page.projects)
+
+            NavigationStack {
+                PhoneDoneView()
+                    .navigationTitle("Done")
+                    .toolbar { controls }
+            }
+            .tint(colors.text)
+            .safeAreaInset(edge: .bottom, spacing: 0) { taskToast }
+            .tabItem { tabLabel("Done", systemImage: "checkmark.circle", destination: .done, colors: colors) }
+            .tag(Page.done)
 
             NavigationStack {
                 QueueView()
@@ -1339,6 +1349,73 @@ private struct PhoneTipSheet: View {
         }
         .interactiveDismissDisabled(tips.purchasingID != nil)
         .task { await tips.load() }
+    }
+}
+
+private struct PhoneDoneView: View {
+    @Environment(PhoneWorkspace.self) private var workspace
+    @Environment(\.phoneColors) private var colors
+    @State private var search = ""
+
+    var body: some View {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tasks = workspace.completedTasks.filter { item in
+            guard !query.isEmpty else { return true }
+            let task = item.task
+            let reference = workspace.hasPendingProjectMove(for: task) ? "" : task.displayTaskID ?? ""
+            return [workspace.displayedText(for: task, field: .title), reference,
+                    workspace.projectName(workspace.displayedProject(for: task)),
+                    workspace.displayedText(for: task, field: .notes)]
+                .contains { $0.localizedStandardContains(query) }
+        }
+
+        List {
+            if let message = workspace.syncError {
+                syncIssue("Couldn’t sync with your Mac", message: message)
+            } else if workspace.remoteWorkspaceFound == false {
+                syncIssue("Waiting for your Mac", message: "Open OpenTalon on your Mac to sync completed tasks.")
+            }
+
+            if workspace.snapshot != nil {
+                if tasks.isEmpty {
+                    if query.isEmpty {
+                        ContentUnavailableView("No completed tasks", systemImage: "checkmark.circle",
+                                               description: Text("Completed tasks from all projects appear here."))
+                    } else {
+                        ContentUnavailableView.search(text: query)
+                    }
+                } else {
+                    ForEach(tasks) { item in
+                        NavigationLink(value: item.id) {
+                            TaskCardLabel(task: item.task, showProject: true, showStatus: false,
+                                          completedAt: item.completedAt, completionPending: item.completionPending)
+                        }
+                        .accessibilityIdentifier("doneTask-\(item.id)")
+                        .listRowBackground(colors.card)
+                    }
+                }
+            } else if workspace.syncError == nil, workspace.remoteWorkspaceFound != false {
+                ProgressView("Checking for completed tasks…")
+                    .listRowBackground(colors.card)
+            }
+        }
+        .modifier(PhoneListAppearance())
+        .searchable(text: $search, prompt: "Search completed tasks")
+        .refreshable { await workspace.sync() }
+        .navigationDestination(for: String.self) { taskID in
+            TaskView(taskID: taskID)
+        }
+    }
+
+    private func syncIssue(_ title: LocalizedStringKey, message: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: "icloud.slash").font(.subheadline.weight(.semibold))
+            Text(message).font(.footnote).foregroundStyle(colors.muted)
+            Button("Retry Sync") { Task { await workspace.sync() } }
+                .buttonStyle(PhoneActionButtonStyle())
+                .disabled(workspace.syncing)
+        }
+        .listRowBackground(colors.card)
     }
 }
 
@@ -2421,6 +2498,8 @@ private struct TaskCardLabel: View {
     let task: PhoneTask
     let showProject: Bool
     let showStatus: Bool
+    var completedAt: Date? = nil
+    var completionPending = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -2449,7 +2528,13 @@ private struct TaskCardLabel: View {
                     .background(colors.actionAccent.opacity(0.10), in: Capsule())
                     .accessibilityIdentifier("taskStage-\(task.id)")
             }
-            if let date = task.createdAt {
+            if completionPending {
+                Label("Completion queued for Mac", systemImage: "clock")
+                    .font(.subheadline).foregroundStyle(colors.muted)
+            } else if let completedAt {
+                Text("Completed \(completedAt.formatted(date: .abbreviated, time: .omitted))")
+                    .font(.subheadline).foregroundStyle(colors.muted)
+            } else if let date = task.createdAt {
                 Text("Created \(date.formatted(date: .abbreviated, time: .omitted))")
                     .font(.subheadline).foregroundStyle(colors.muted)
             }

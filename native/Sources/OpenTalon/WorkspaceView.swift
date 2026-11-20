@@ -52,6 +52,8 @@ struct WorkspaceView: View {
                             .padding(.leading, 12)
                         }
                         Spacer()
+                        Button("Ask OpenTalon", systemImage: "sparkles") { model.navigate(.assistant) }
+                            .accessibilityIdentifier("askOpenTalon")
                         Button("Ask my agent", systemImage: "bubble.left.and.text.bubble.right") {
                             model.sheet = .agentChat
                         }
@@ -69,6 +71,7 @@ struct WorkspaceView: View {
                         case .archive: ArchiveView()
                         case .trash: TrashView()
                         case .about: AboutView()
+                        case .assistant: MacTaskAssistantView()
                         }
                         if let task = model.selected {
                             Rectangle().fill(palette.line).frame(width: 1)

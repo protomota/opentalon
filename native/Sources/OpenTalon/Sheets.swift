@@ -534,6 +534,7 @@ private struct SendView: View {
     @State private var options: AgentOptions?
     @State private var agent: PhoneAgent?
     @State private var selectedModel: String?
+    @State private var dispatchComment = ""
     @State private var showSetup = false
     @State private var busy = false
     @State private var error: String?
@@ -563,6 +564,9 @@ private struct SendView: View {
             } else if options == nil && error == nil {
                 ProgressView().controlSize(.small)
             }
+            TextField("Extra direction (optional)", text: $dispatchComment, axis: .vertical)
+                .textFieldStyle(.plain).lineLimit(2...4).padding(12).surface(10)
+                .accessibilityIdentifier("agentDispatchComment")
             DisclosureGroup("Agent setup", isExpanded: $showSetup) {
                 AgentControls(settingUpSend: true)
                     .padding(.top, 8)
@@ -573,7 +577,7 @@ private struct SendView: View {
                 Spacer()
                 Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
                 Button("Send to agent", action: send).glassPrimary()
-                    .disabled(options == nil)
+                    .disabled(options == nil || dispatchComment.utf16.count > 10_000)
             }
         }
         .disabled(busy)
@@ -594,7 +598,8 @@ private struct SendView: View {
         Task {
             defer { busy = false }
             do {
-                try await model.finishSend(agent: agent, model: models.first(where: { $0.id == selectedModel })?.id)
+                try await model.finishSend(agent: agent, model: models.first(where: { $0.id == selectedModel })?.id,
+                                           comment: dispatchComment)
             } catch let failure {
                 error = failure.localizedDescription
                 if let serviceFailure = failure as? ServiceFailure,

@@ -39,6 +39,7 @@ final class WorkspaceModel {
     @ObservationIgnored let phoneCompanion: PhoneCompanion
     let reviewMilestone: OpenTalonReviewMilestone
     let agentChat: AgentChat
+    let taskAssistant: MacTaskAssistant
     @ObservationIgnored var appearanceChanged: ((Theme) -> Void)?
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private let defaults: UserDefaults?
@@ -68,6 +69,7 @@ final class WorkspaceModel {
     init(profile: URL, useDefaults: Bool) {
         self.profile = profile
         agentChat = AgentChat(profile: profile)
+        taskAssistant = MacTaskAssistant(profile: profile)
         phoneCompanion = PhoneCompanion(profile: profile, isolated: !useDefaults)
         defaults = useDefaults ? .standard : nil
         reviewMilestone = OpenTalonReviewMilestone(defaults: defaults)
@@ -223,7 +225,7 @@ final class WorkspaceModel {
     }
 
     func findTasks() {
-        if page == .dashboard || page == .about { navigate(.all) }
+        if page == .dashboard || page == .about || page == .assistant { navigate(.all) }
         searchSignal += 1
     }
 
@@ -408,11 +410,13 @@ final class WorkspaceModel {
         catch let failure as ServiceFailure where isSetup(failure) { stageSend(name, fields, title: title) }
     }
 
-    func finishSend(agent: PhoneAgent?, model: String?) async throws {
+    func finishSend(agent: PhoneAgent?, model: String?, comment: String = "") async throws {
         guard let intent = pendingSend else { return }
         var input = intent.input
         input["agent"] = agent?.rawValue
         input["model"] = model
+        let comment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !comment.isEmpty { input["dispatchComment"] = comment }
         if let id = input["id"] as? String {
             let current: ItemResponse = try await service.call("get_task", ["id": id])
             guard !current.task.deleted else {

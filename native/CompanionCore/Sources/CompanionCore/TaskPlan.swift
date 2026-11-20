@@ -45,7 +45,7 @@ public enum TaskPlan {
     }
 
     public static func requested(in idea: String) -> Bool {
-        idea.range(of: #"(?i)\b(?:(?:with|include|add|create|write|make|draft)\s+(?:(?:me|it)\s+)?(?:a\s+)?(?:task\s+)?plan|plan\s+(?:for|with)\s+(?:this|the)\s+task)\b"#,
+        idea.range(of: #"(?i)\b(?:(?:with|include|add|create|write|make|draft)\s+(?:(?:me|it)\s+)?(?:a\s+)?(?:(?:markdown|project|task|detailed|step-by-step)\s+)?plan|plan\s+(?:for|with)\s+(?:this|the)\s+task)\b"#,
                    options: .regularExpression) != nil
     }
 

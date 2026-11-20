@@ -230,7 +230,7 @@ struct Preview: Decodable, Identifiable {
 }
 
 enum WorkspacePage: Hashable {
-    case dashboard, all, recent, board(String), archive, trash, about
+    case dashboard, all, recent, board(String), archive, trash, about, assistant
     var storageKey: String {
         switch self {
         case .dashboard: "dashboard"
@@ -240,6 +240,7 @@ enum WorkspacePage: Hashable {
         case .archive: "archive"
         case .trash: "trash"
         case .about: "about"
+        case .assistant: "assistant"
         }
     }
 }

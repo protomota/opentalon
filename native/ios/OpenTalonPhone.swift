@@ -509,11 +509,12 @@ struct CompanionHome: View {
     private var controls: some ToolbarContent {
         PhoneActionToolbarItem(placement: .primaryAction) {
             Button { showAssistant = true } label: {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(OpenTalonColors(theme: theme, systemScheme: systemScheme).actionAccent)
+                PhoneActionLabel(title: "Ask OpenTalon", systemImage: "sparkles")
+                    .labelStyle(.titleAndIcon)
             }
-            .buttonStyle(PhoneActionButtonStyle(circular: true))
+            .buttonStyle(PhoneActionButtonStyle())
             .accessibilityLabel("Ask OpenTalon")
+            .accessibilityIdentifier("askOpenTalon")
             .disabled(workspace.snapshot == nil)
         }
         PhoneActionToolbarItem(placement: .primaryAction) {
@@ -3946,7 +3947,7 @@ private struct PhoneAssistantView: View {
                             }
                             if generation != nil { ProgressView("Working on this device…") }
                             if let error = error ?? history.error {
-                                Text(error).font(.footnote).foregroundStyle(colors.danger)
+                                assistantNotice(error)
                             }
                             if let reason = TaskDrafting.unavailableReason {
                                 Text(reason).font(.footnote).foregroundStyle(colors.muted)
@@ -4032,6 +4033,23 @@ private struct PhoneAssistantView: View {
         .padding(20)
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded { inputFocused = false })
+    }
+
+    private func assistantNotice(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.bubble").foregroundStyle(colors.actionAccent)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Request needs attention").font(.subheadline.bold())
+                Text(message).font(.footnote).foregroundStyle(colors.muted)
+                if let request = history.current?.messages.last(where: { $0.role == "user" })?.text {
+                    Button("Edit request") { input = request; error = nil; inputFocused = true }
+                }
+            }
+            Spacer(minLength: 0)
+            Button("Dismiss") { error = nil }.disabled(error == nil)
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        .background(colors.card, in: RoundedRectangle(cornerRadius: 18))
     }
 
     private var examples: some View {
@@ -4162,7 +4180,8 @@ private struct PhoneAssistantView: View {
             guard !title.isEmpty, title.utf16.count <= 500, let first = snapshot.projects.first else {
                 throw AssistantError.message("A task needs a title of no more than 500 characters and an available project.")
             }
-            let existing = snapshot.projects.first { $0.id == command.project || $0.name.localizedCompare(command.project) == .orderedSame }
+            let projectID = command.projectID(in: snapshot.projects, requestedBy: message)
+            let existing = snapshot.projects.first { $0.id == projectID }
             let personal = snapshot.projects.first { $0.name.caseInsensitiveCompare("Personal") == .orderedSame }
             let newProject: String?
             if existing == nil, !command.project.isEmpty {

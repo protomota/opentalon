@@ -3,6 +3,7 @@ import SwiftUI
 public enum TaskRevisionRequestCopy {
     public static let heading = "Revision requests"
     public static let field = "Revision request"
+    public static let add = "Add revision request"
     public static let send = "Send revision request"
     public static let example = "For example, add a retry test and report what passed."
 }

@@ -476,6 +476,23 @@ class Store {
   comments(taskId) {
     return comments(this, taskId)
   }
+  validateRevisionReceipts(taskId, ids) {
+    if (!ids.length) return
+    const valid = new Set(this.comments(taskId).filter((request) => request.source === 'user').map((request) => request.id))
+    if (ids.some((id) => !valid.has(id)))
+      throw new AppError('NOT_FOUND', 'Choose revision requests on this task.')
+  }
+  markRevisionRequestsActedOn(ids, activityID) {
+    if (!ids.length) return
+    const update = this.db.prepare("UPDATE task_comments SET data=json_set(data,'$.actedOnActivityID',?,'$.delivery','delivered') WHERE id=?")
+    for (const id of ids) update.run(activityID, id)
+  }
+  flagUnconfirmedRevisionRequests(job) {
+    if (!job.requiresRevisionReceipts || !job.commentIds?.length) return
+    const update = this.db.prepare(`UPDATE task_comments SET data=json_set(data,'$.delivery','needs-review')
+      WHERE id=? AND json_extract(data,'$.runId')=? AND json_extract(data,'$.actedOnActivityID') IS NULL`)
+    for (const id of job.commentIds) update.run(id, job.id)
+  }
   commentImage(id) {
     const image = this.db.prepare('SELECT * FROM comment_images WHERE id=?').get(id) || this.db.prepare('SELECT * FROM activity_images WHERE id=?').get(id)
     if (!image) throw new AppError('NOT_FOUND', 'This screenshot no longer exists.')
@@ -538,6 +555,7 @@ class Store {
             threadId: previous.threadId,
             resumeThread: true,
             commentIds: pending.map((comment) => comment.id),
+            requiresRevisionReceipts: true,
             state: 'queued',
             summary: 'Revision requests queued for the existing conversation.',
             createdAt: new Date().toISOString(),
@@ -617,6 +635,7 @@ class Store {
         const result = this.saveAgentJob({ ...job, ...patch, pickedUpAt })
         if (this.assignedRun(job.taskId) === id) {
           if (['failed', 'canceled', 'interrupted', 'review'].includes(patch.state)) {
+            this.flagUnconfirmedRevisionRequests(result)
             const task = this.task(job.taskId)
             if (!task.deleted && task.status === 'Sent to agent') {
               this.move(task, { status: 'To do' }, revision)
@@ -668,6 +687,9 @@ class Store {
     const dispatchCommentId = dispatchComment === undefined
       ? undefined
       : insertComment(this, task.id, dispatchComment).id
+    const waiting = this.comments(task.id).filter((request) => request.source === 'user' && !request.actedOnAt
+      && ['local', 'pending'].includes(request.delivery) && request.id !== dispatchCommentId)
+    const selected = [...(dispatchCommentId ? [dispatchCommentId] : []), ...waiting.slice(0, dispatchCommentId ? 2 : 3).map((request) => request.id)]
     const now = new Date().toISOString()
     const job = this.saveAgentJob({
       id: randomUUID(),
@@ -675,15 +697,19 @@ class Store {
       agent: settings.defaultAgent,
       model,
       dispatchCommentId,
+      commentIds: selected,
+      requiresRevisionReceipts: true,
       workingFolder: settings.workingFolder,
       state: 'queued',
       threadId: null,
       summary: 'Waiting to start',
       createdAt: now,
     })
-    if (dispatchCommentId)
-      this.db.prepare("UPDATE task_comments SET data=json_set(data, '$.delivery', 'queued', '$.runId', ?) WHERE id=?")
-        .run(job.id, dispatchCommentId)
+    const queue = this.db.prepare("UPDATE task_comments SET data=json_set(data, '$.delivery', 'queued', '$.runId', ?) WHERE id=?")
+    for (const id of selected) queue.run(job.id, id)
+    const pending = this.db.prepare("UPDATE task_comments SET data=json_set(data, '$.delivery', 'pending') WHERE id=?")
+    const queued = new Set(selected)
+    for (const { id } of waiting) if (!queued.has(id)) pending.run(id)
     this.assignAgent(task.id, job.id)
     return job
   }
@@ -1169,11 +1195,12 @@ class Store {
         const task = this.task(a.taskId)
         if(task.deleted) throw new AppError('IN_TRASH','Restore the task before adding activity.')
         if(!a.text.trim() && !a.images?.length) throw new AppError('EMPTY_COMMENT','Write an activity update or attach a screenshot.')
-        const comment = a.commentId && this.comments(a.taskId).find(comment => comment.id === a.commentId && comment.source === 'user')
-        if (a.commentId && !comment) throw new AppError('NOT_FOUND','Choose a revision request on this task.')
+        if (a.commentId && a.commentIds) throw new AppError('INVALID_ARGUMENT', 'Use either commentId or commentIds.')
+        const ids = a.commentIds || (a.commentId ? [a.commentId] : [])
+        this.validateRevisionReceipts(task.id, ids)
         const runId = this.assignedRun(a.taskId)
-        const activity = taskActivity.record(this,a.taskId,{actor:origin,kind:'agent',summary:comment?'Response to your revision request':'Agent update',detail:a.text,data:{...(runId?{runId}:{}),...(comment?{commentID:comment.id}:{})}},a.images || [])
-        if (comment) this.db.prepare("UPDATE task_comments SET data=json_set(data,'$.actedOnActivityID',?) WHERE id=?").run(activity.id,comment.id)
+        const activity = taskActivity.record(this,a.taskId,{actor:origin,kind:'agent',summary:ids.length?'Revision request response':'Agent update',detail:a.text,data:{...(runId?{runId}:{}),...(ids.length === 1 ? {commentID:ids[0]} : ids.length ? {commentIDs:ids} : {})}},a.images || [])
+        this.markRevisionRequestsActedOn(ids, activity.id)
         result = {activity,...(name === 'add_task_comment' ? {comment:activity,redirectedToActivity:true} : {})}
       } else if (name === 'set_agent_settings') {
         if (
@@ -1197,6 +1224,8 @@ class Store {
         if (task.deleted || !['Sent to agent', 'In progress'].includes(task.status))
           throw new AppError('TASK_MOVED', 'The task was moved or removed. Stop work on it.')
         let completionReport
+        if (a.actedOnCommentIds && a.state !== 'done')
+          throw new AppError('INVALID_ARGUMENT', 'Link acted-on revision requests to a completed report or Activity update.')
         if (a.state === 'done') {
           if (
             a.definitionOfDoneMet !== true ||
@@ -1214,9 +1243,16 @@ class Store {
               'INVALID_ARGUMENT',
               'Keep the completion report, proof and definition of done within 10,000 characters combined.'
             )
-          completionReport = taskActivity.record(this, task.id, {actor:job.agent === 'codex' ? 'Codex' : 'Claude',kind:'agent',summary:'Completion report',detail:report,data:{agent:job.agent,runId:job.id}})
+          const ids = a.actedOnCommentIds || []
+          this.validateRevisionReceipts(task.id, ids)
+          if (job.requiresRevisionReceipts && this.comments(task.id).some((request) =>
+            job.commentIds?.includes(request.id) && !request.actedOnAt && !ids.includes(request.id)))
+            throw new AppError('REVISION_PROOF_REQUIRED', 'Record which revision requests were acted on before completing this run. Report needs-input when a request cannot be completed.')
+          completionReport = taskActivity.record(this, task.id, {actor:job.agent === 'codex' ? 'Codex' : 'Claude',kind:'agent',summary:'Completion report',detail:report,data:{agent:job.agent,runId:job.id,...(ids.length ? {commentIDs:ids} : {})}})
+          this.markRevisionRequestsActedOn(ids, completionReport.id)
         }
         if (a.state !== 'done') taskActivity.record(this, task.id, {actor:job.agent === 'codex' ? 'Codex' : 'Claude',kind:'agent',summary:a.state === 'working' ? 'Agent progress' : a.state === 'needs-input' ? 'Agent needs your input' : 'Agent run failed',detail:a.summary,data:{agent:job.agent,runId:job.id}})
+        if (a.state === 'failed') this.flagUnconfirmedRevisionRequests(job)
         const hasNewComments =
           a.state === 'done' &&
           this.comments(task.id).some((comment) => ['pending', 'queued'].includes(comment.delivery))
@@ -1232,7 +1268,7 @@ class Store {
             summary:
               a.summary +
               (hasNewComments
-                ? '\nNew comments are waiting for the next check; this task remains In progress.'
+                ? '\nNew revision requests are waiting for the next check. The task remains In progress.'
                 : ''),
           }, {activity:false}),
           task,

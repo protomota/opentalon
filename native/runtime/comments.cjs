@@ -44,9 +44,9 @@ function commentActivity(store, row) {
     comment.actedOnActivityID &&
     store.db
       .prepare(
-        "SELECT id,saved_at FROM task_activity WHERE id=? AND task_id=? AND json_extract(data,'$.commentID')=?"
+        "SELECT id,saved_at FROM task_activity WHERE id=? AND task_id=? AND (json_extract(data,'$.commentID')=? OR EXISTS (SELECT 1 FROM json_each(data,'$.commentIDs') WHERE value=?))"
       )
-      .get(comment.actedOnActivityID, row.task_id, row.id)
+      .get(comment.actedOnActivityID, row.task_id, row.id, row.id)
   const jobRow =
     comment.runId &&
     store.db
@@ -55,6 +55,7 @@ function commentActivity(store, row) {
   const job = jobRow ? JSON.parse(jobRow.data) : null
   if (
     !activity &&
+    job?.requiresRevisionReceipts !== true &&
     comment.delivery === 'delivered' &&
     ['done', 'review'].includes(job?.state) &&
     job.summary?.trim() &&

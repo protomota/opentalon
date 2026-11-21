@@ -261,6 +261,7 @@ test('comment Acted on links isolate the responding run and its task changes, ne
   let saved=f.store.comments(task.id).find(item=>item.id===comment.id)
   assert.ok(saved.pickedUpAt);assert.equal(saved.actedOnAt,null)
   await f.write('update_task',{id:task.id,expectedRevision:f.store.task(task.id).revision,priority:'High'})
+  await f.write('add_task_activity',{taskId:task.id,commentId:comment.id,text:'Changed priority to High as requested.'})
   await f.store.updateAgentJob(run.id,{state:'review',summary:'Changed priority to High as requested.'})
   saved=f.store.comments(task.id).find(item=>item.id===comment.id)
   assert.ok(saved.actedOnAt);assert.ok(saved.activityID)
@@ -272,6 +273,38 @@ test('comment Acted on links isolate the responding run and its task changes, ne
   assert.ok(!activity.entries.some(entry=>entry.runId===old.id))
   const foreign=await f.task('Foreign task')
   await assert.rejects(f.store.dispatch('list_task_activity',{taskId:foreign.id,commentId:comment.id}),{code:'NOT_FOUND'})
+})
+
+test('one verified response marks two revision requests and keeps later requests open', async t => {
+  const f = fixture(t), task = await f.task('Confirm two revision requests')
+  const previous = f.previous(task, 'codex')
+  const first = await f.comment(task, 'Make the priority High.')
+  const second = await f.comment(task, 'Describe the verification in Activity.')
+  await f.store.queueCommentFollowups()
+  const run = f.store.agentJobs().find(job => job.id !== previous.id)
+  assert.deepEqual(run.commentIds, [first.id, second.id])
+  await f.store.updateAgentJob(run.id, {state:'starting'})
+  await f.store.updateAgentJob(run.id, {state:'working'}, {pickedUp:true})
+  const later = await f.comment(task, 'Check the release date separately.')
+  assert.ok(f.store.comments(task.id).every(request => !request.actedOnAt))
+  const proof = {
+    runId:run.id, state:'done', summary:'Changed priority and recorded the checks.',
+    proof:'Verified the saved priority and documented the checks in Activity.', definitionOfDoneMet:true
+  }
+  await assert.rejects(f.write('report_agent_progress', {...proof, actedOnCommentIds:[first.id]}),
+    {code:'REVISION_PROOF_REQUIRED'})
+  const report = await f.write('report_agent_progress', {...proof, actedOnCommentIds:[first.id,second.id]})
+  const rows = f.store.comments(task.id)
+  assert.deepEqual(rows.map(row => row.activityID), [report.completionReport.id, report.completionReport.id, null])
+  for (const id of [first.id, second.id]) {
+    const activity = await f.store.dispatch('list_task_activity', {taskId:task.id,commentId:id})
+    assert.ok(activity.entries.some(entry => entry.id === report.completionReport.id))
+  }
+  assert.equal(rows.find(row => row.id === later.id).delivery, 'pending')
+  const backup = await f.write('create_backup', {format:'json'})
+  const preview = await f.store.dispatch('preview_destructive_action', {action:'restore_backup',path:backup.path})
+  await f.write('confirm_destructive_action', {token:preview.token})
+  assert.deepEqual(f.store.comments(task.id).map(row => row.activityID), [report.completionReport.id, report.completionReport.id, null])
 })
 
 test('explicit external-agent responses link to user comments and survive backups without changing comments', async t => {

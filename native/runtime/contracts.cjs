@@ -147,7 +147,7 @@ const tools = [
   ),
   tool(
     'report_agent_progress',
-    'Update the task attached to an active dispatched run. Use working when starting, needs-input when blocked, or failed on failure. Done REQUIRES proof (concrete checks/results, artifact paths/links or screenshot IDs, and how the definition of done was met) plus definitionOfDoneMet true. The completion report is saved in Activity atomically before Done. Comments belong only to the user. A completed turn alone does not complete the task.',
+    'Update the task attached to an active dispatched run. Done requires proof and definitionOfDoneMet true. Include actedOnCommentIds for the revision requests this proof verifies. The completion report and receipt for each listed request save atomically before Done.',
     {
       ...write,
       runId: id,
@@ -155,6 +155,7 @@ const tools = [
       summary: string(10000),
       proof: string(10000),
       definitionOfDoneMet: { type: 'boolean' },
+      actedOnCommentIds: { type: 'array', items: id, minItems: 1, maxItems: 50, uniqueItems: true },
     },
     ['runId', 'state', 'summary', 'requestKey'],
     true
@@ -324,8 +325,9 @@ const tools = [
 tools.push(
   tool('list_task_activity','Read task activity, including moves, edits, agent reports and earlier messages. Newest first; follow nextBefore with beforeSequence.',
     {taskId:id,commentId:id,beforeSequence:{type:'integer',minimum:1},limit:{type:'integer',minimum:1,maximum:50}},['taskId']),
-  tool('add_task_activity','Record an agent update or work report in Activity. Never creates a user comment. When responding to a user comment, pass its commentId to link the response and mark it Acted on. Reuse requestKey on retries.',
-    {...tools.find(({name})=>name==='add_task_comment').inputSchema.properties,commentId:id},['taskId','text','requestKey'],true)
+  tool('add_task_activity','Record an agent update in Activity. Pass commentIds to link one verified response to all revision requests it addresses, or commentId for an older single-request client. Only include requests actually acted on.',
+    {...tools.find(({name})=>name==='add_task_comment').inputSchema.properties,commentId:id,
+      commentIds:{type:'array',items:id,minItems:1,maxItems:50,uniqueItems:true}},['taskId','text','requestKey'],true)
 )
 const local = [
   tool('add_user_comment','Save a comment explicitly entered in the native application. Private user interface action.',

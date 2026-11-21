@@ -206,7 +206,7 @@ ${task.notes || '(No notes)'}
 Plan (Markdown):
 ${task.planMarkdown || '(No plan attached)'}
 
-Use the opentalon MCP connection to read get_task with this task ID before doing work. Record all your work updates with add_task_activity, never add_task_comment or a user-comment action. When you have actually responded to a user comment, pass its commentId to add_task_activity and describe the changes made; never acknowledge a comment just because you read or picked it up. Read list_task_activity and list_task_comments for this task too, including manually saved notes, and use read_comment_image for any attached screenshots. Call report_agent_progress with runId ${job.id}, a fresh requestKey, state working, and a brief summary when starting. Report needs-input if clarification or approval is needed. Before reporting done, re-read the current task and comments, complete its definition of done and verify the requested outcome. Then call report_agent_progress with state done, summary, proof and definitionOfDoneMet true. Proof MUST explain how the criteria were met and include concrete evidence: commands/checks and their actual results, deliverable paths or links, or screenshot IDs in Activity or user comments appropriate to this task. The app saves this report in Activity before moving it to Done. Comments belong only to the user. Never invent evidence, claim unrun checks passed, or use move_task/update_task to bypass the completion report. If any requirement or verification remains incomplete, report needs-input or failed and keep the task open. A response ending does not by itself complete the task. Do not dispatch more agents, change other tasks, commit, push, publish, or delete data unless the task and user instructions explicitly authorize it. If the task was moved away or the run is inactive, stop work.`
+Use the opentalon MCP connection to read get_task with this task ID before doing work. Record all your work updates with add_task_activity, never add_task_comment or a user-comment action. Read list_task_activity and list_task_comments, including every unaddressed revision request. Consider the requests together and use read_comment_image for any additional screenshots. After verifying the changes, pass every addressed request ID in commentIds to add_task_activity, or in actedOnCommentIds to the proven Done report. Include proof for each request. Leave requests that need input open. Call report_agent_progress with runId ${job.id}, a fresh requestKey, state working, and a brief summary when starting. Report needs-input if clarification or approval is needed. Before reporting done, re-read the current task and revision requests, complete its definition of done and verify the requested outcome. Then call report_agent_progress with state done, summary, proof and definitionOfDoneMet true. Proof MUST explain how the criteria were met and include concrete evidence: commands/checks and their actual results, deliverable paths or links, or screenshot IDs in Activity or user comments appropriate to this task. The app saves this report in Activity before moving it to Done. Revision requests belong to the user. Never invent evidence, claim unrun checks passed, or use move_task/update_task to bypass the completion report. If any requirement or verification remains incomplete, report needs-input or failed and keep the task open. A response ending does not by itself complete the task. Do not dispatch more agents, change other tasks, commit, push, publish, or delete data unless the task and user instructions explicitly authorize it. If the task was moved away or the run is inactive, stop work.`
 }
 
 // Newline JSON transports used by the first-party CLI runtimes. No shell commands or credentials in IPC.
@@ -620,24 +620,17 @@ class AgentRunner {
     return project.id
   }
   turnInput(task, job, agent) {
-    const comments = job.resumeThread
-      ? this.store.comments(task.id).filter((comment) => job.commentIds.includes(comment.id))
-      : job.dispatchCommentId
-        ? this.store.comments(task.id).filter((comment) => comment.id === job.dispatchCommentId)
-        : []
-    const text =
-      taskPrompt(task, job) +
-      (job.resumeThread
-        ? '\n\nContinue this SAME conversation. The user added these comments; address them now:\n' +
-          comments
-            .map(
-              (comment) =>
-                `[${comment.createdAt}] ${comment.text || '(Screenshot attached)'}${comment.images.length ? '\nScreenshots: ' + comment.images.map((image) => image.name).join(', ') : ''}`
-            )
-            .join('\n\n')
-        : comments.length
-          ? '\n\nAdditional direction from the user when they sent this task:\n' + comments[0].text
-          : '')
+    const requestIds = job.commentIds || (job.dispatchCommentId ? [job.dispatchCommentId] : [])
+    const comments = requestIds.length
+      ? this.store.comments(task.id).filter((request) => requestIds.includes(request.id) && !request.actedOnAt)
+      : []
+    const text = taskPrompt(task, job) + (comments.length
+      ? (job.resumeThread ? '\n\nContinue this SAME conversation. ' : '\n\n') +
+        'Address these revision requests together and record a receipt for each one you complete:\n' +
+        comments.map((request) =>
+          `[${request.id}, ${request.createdAt}] ${request.text || '(Screenshot attached)'}${request.images.length ? '\nScreenshots: ' + request.images.map((image) => image.name).join(', ') : ''}`
+        ).join('\n\n')
+      : '')
     const images = comments.flatMap((comment) =>
       comment.images.map((image) => this.store.commentImage(image.id))
     )

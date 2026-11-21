@@ -51,7 +51,7 @@ struct TaskComments: View {
                 Button {
                     composing = true
                 } label: {
-                    Label("Request a revision", systemImage: "square.and.pencil")
+                    Label(TaskRevisionRequestCopy.add, systemImage: "plus")
                 }
                 .buttonStyle(GlassActionStyle())
             }

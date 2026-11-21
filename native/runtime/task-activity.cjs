@@ -67,8 +67,8 @@ function page(store, id, beforeSequence, limit = 20, commentID) {
       .find((item) => item.id === commentID && item.source === 'user')
     if (!comment) throw new AppError('NOT_FOUND', 'This revision request is no longer available.')
     // Only the comment's own assigned run and explicit responses belong in this drill-down.
-    filter = " AND (json_extract(data,'$.commentID')=? OR json_extract(data,'$.runId')=? OR id=?)"
-    parameters = [commentID, comment.runId || '', comment.activityID || '']
+    filter = " AND (json_extract(data,'$.commentID')=? OR EXISTS (SELECT 1 FROM json_each(data,'$.commentIDs') WHERE value=?) OR json_extract(data,'$.runId')=? OR id=?)"
+    parameters = [commentID, commentID, comment.runId || '', comment.activityID || '']
   }
   const rows = store.db
     .prepare(
@@ -146,7 +146,7 @@ function recordHistory(store, taskId, row, value, previous, changes) {
 function migrateMessages(store) {
   for (const row of store.db.prepare('SELECT * FROM task_comments ORDER BY rowid').all()) {
     const comment = JSON.parse(row.data)
-    if (comment.agent) {
+    if (comment.agent && comment.source !== 'user') {
       const images = store.db
         .prepare('SELECT * FROM comment_images WHERE comment_id=?')
         .all(row.id)
@@ -287,9 +287,12 @@ function validateRows(rows, images, tasks, comments) {
       Array.isArray(data) ||
       typeof data !== 'object' ||
       Object.entries(data).some(
-        ([key, value]) =>
-          !['agent', 'runId', 'historyID', 'commentID'].includes(key) ||
-          !(value === null || text(value, 200))
+        ([key, value]) => key === 'commentIDs'
+          ? !Array.isArray(value) || value.length < 1 || value.length > 50 ||
+            new Set(value).size !== value.length ||
+            value.some((id) => !text(id, 200) || commentIDs.get(id) !== row.task_id)
+          : !['agent', 'runId', 'historyID', 'commentID'].includes(key) ||
+            !(value === null || text(value, 200))
       )
     )
       bad()

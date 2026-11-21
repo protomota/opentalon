@@ -3290,7 +3290,7 @@ private struct TaskView: View {
                 Button {
                     showComment = true
                 } label: {
-                    PhoneActionLabel(title: commentText.isEmpty ? "Request a revision" : "Continue revision request", systemImage: "square.and.pencil")
+                    PhoneActionLabel(title: commentText.isEmpty ? LocalizedStringKey(TaskRevisionRequestCopy.add) : "Continue revision request", systemImage: "plus")
                 }
                 if let commentError {
                     Text(commentError).font(.caption).foregroundStyle(colors.danger)

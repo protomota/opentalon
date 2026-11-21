@@ -1,5 +1,12 @@
 import SwiftUI
 
+public enum TaskRevisionRequestCopy {
+    public static let heading = "Revision requests"
+    public static let field = "Revision request"
+    public static let send = "Send revision request"
+    public static let example = "For example, add a retry test and report what passed."
+}
+
 public struct TaskActivityImage: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public let name: String
@@ -89,13 +96,13 @@ public struct TaskActivityView: View {
     public var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(commentID == nil ? "Activity" : "Comment activity").font(.headline)
+                Text(commentID == nil ? "Activity" : "Revision request activity").font(.headline)
                 Spacer()
                 Button("Close") { dismiss() }.accessibilityIdentifier("activityClose")
             }.padding(20)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
-                    Text(commentID == nil ? "Task changes and agent updates." : "The agent’s response and recorded changes for your comment.")
+                    Text(commentID == nil ? "Task changes and agent updates." : "The agent’s response and recorded changes for your revision request.")
                         .font(.callout).foregroundStyle(colors.muted)
                     if let failure { Text(failure).foregroundStyle(colors.danger) }
                     if waitingForMac {
@@ -188,7 +195,7 @@ public struct EarlierTaskActivityView: View {
             }.padding(20)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
-                    Text("Messages from an older Mac are kept here. Update OpenTalon on your Mac to link new agent responses to your comments.")
+                    Text("Messages from an older Mac are kept here. Update OpenTalon on your Mac to link new agent responses to your revision requests.")
                         .font(.callout).foregroundStyle(colors.muted)
                     ForEach(comments.reversed()) { entry in
                         DisclosureGroup {

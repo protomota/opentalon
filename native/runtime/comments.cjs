@@ -74,9 +74,9 @@ function commentActivity(store, row) {
 
 function insertComment(store, taskId, text, images = [], notifyAgent = false, author = {}) {
   const task = store.task(taskId)
-  if (task.deleted) throw new AppError('IN_TRASH', 'Restore the task before adding a comment.')
+  if (task.deleted) throw new AppError('IN_TRASH', 'Restore the task before sending a revision request.')
   if (!text.trim() && !images.length)
-    throw new AppError('EMPTY_COMMENT', 'Write a comment or attach a screenshot.')
+    throw new AppError('EMPTY_COMMENT', 'Describe the change you want or attach a screenshot.')
   const normalized = images.map((image) => ({ ...image, bytes: imageBytes(image) }))
   const id = randomUUID()
   store.db.prepare('INSERT INTO task_comments VALUES (?,?,?)').run(
@@ -99,7 +99,7 @@ function insertComment(store, taskId, text, images = [], notifyAgent = false, au
     require('./task-activity.cjs').record(store, taskId, {
       actor: author.actor || 'You',
       kind: 'comment',
-      summary: 'Added a comment'
+      summary: 'Saved a revision request'
     })
   return comments(store, taskId).find((comment) => comment.id === id)
 }
@@ -128,7 +128,7 @@ function validateComments(records, images, tasks) {
     new Set(records.map((row) => row?.id)).size !== records.length ||
     new Set(images.map((row) => row?.id)).size !== images.length
   )
-    throw new AppError('INVALID_BACKUP', 'Invalid comments or screenshot records.')
+    throw new AppError('INVALID_BACKUP', 'Invalid revision request or screenshot records.')
   const taskIds = new Set(tasks.map((task) => task.id))
   const ids = new Set()
   for (const row of records) {
@@ -150,7 +150,7 @@ function validateComments(records, images, tasks) {
       !(row.runId === null || typeof row.runId === 'string') ||
       !(row.agent === null || ['claude-code', 'codex'].includes(row.agent))
     )
-      throw new AppError('INVALID_BACKUP', 'Invalid comment data.')
+      throw new AppError('INVALID_BACKUP', 'Invalid revision request data.')
     ids.add(row.id)
   }
   const counts = new Map()
@@ -162,11 +162,11 @@ function validateComments(records, images, tasks) {
       image.id.length > 150 ||
       !ids.has(image.commentId)
     )
-      throw new AppError('INVALID_BACKUP', 'A screenshot has no valid comment.')
+      throw new AppError('INVALID_BACKUP', 'A screenshot has no matching revision request.')
     imageBytes(image)
     counts.set(image.commentId, (counts.get(image.commentId) || 0) + 1)
     if (counts.get(image.commentId) > 3)
-      throw new AppError('INVALID_BACKUP', 'A comment has too many screenshots.')
+      throw new AppError('INVALID_BACKUP', 'A revision request has too many screenshots.')
   }
 }
 function restoreComments(store, records, images) {

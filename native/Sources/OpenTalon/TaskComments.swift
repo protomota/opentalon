@@ -1,4 +1,5 @@
 import AppKit
+import CompanionCore
 import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
@@ -28,20 +29,20 @@ struct TaskComments: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
-                Text("Comments").font(.system(size: 13, weight: .semibold))
+                Text(TaskRevisionRequestCopy.heading).font(.system(size: 13, weight: .semibold))
                 Spacer()
-                if assigned && item.status == .working {
+                if assigned && item.status == .working && model.canUseAgents {
                     Button("Check now") {
                         model.perform {
                             let result: CommentCheck = try await model.service.call("check_task_comments")
-                            feedback = result.queued == 0 ? "No pending comments to send." : "Comments queued."
+                            feedback = result.queued == 0 ? "No pending revision requests." : "Revision requests queued."
                             await load()
                         }
                     }.buttonStyle(.link).font(.caption)
                 }
             }
             if comments.isEmpty {
-                Text("No comments yet.").font(.caption).foregroundStyle(palette.muted)
+                Text("No revision requests yet.").font(.caption).foregroundStyle(palette.muted)
             }
             ForEach(comments) { comment in commentCard(comment) }
             if composing {
@@ -50,14 +51,14 @@ struct TaskComments: View {
                 Button {
                     composing = true
                 } label: {
-                    Label("Add comment", systemImage: "plus.bubble")
+                    Label("Request a revision", systemImage: "square.and.pencil")
                 }
                 .buttonStyle(GlassActionStyle())
             }
-            if assigned && model.canUseAgents {
-                Text("On an In progress task, new comments reach its agent conversation at the next five-minute check.")
-                    .font(.caption).foregroundStyle(palette.muted)
-            }
+            Text(assigned && item.status == .working && model.canUseAgents
+                 ? "OpenTalon sends requests to the assigned agent at its next five-minute check."
+                 : "Requests stay with this task for the next agent run.")
+                .font(.caption).foregroundStyle(palette.muted)
             if let feedback { Text(feedback).font(.caption).foregroundStyle(palette.muted) }
         }
         .disabled(posting)
@@ -87,10 +88,20 @@ struct TaskComments: View {
         VStack(alignment: .leading, spacing: 9) {
             TextEditor(text: $text)
                 .scrollContentBackground(.hidden)
+                .overlay(alignment: .topLeading) {
+                    if text.isEmpty {
+                        Text(TaskRevisionRequestCopy.example)
+                            .foregroundStyle(palette.muted)
+                            .padding(.leading, 5)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
                 .padding(5)
                 .frame(height: 68)
                 .surface()
-                .accessibilityLabel("Write a comment")
+                .accessibilityLabel(TaskRevisionRequestCopy.field)
+                .accessibilityHint(TaskRevisionRequestCopy.example)
                 .focused($commentFocused)
                 .onAppear { commentFocused = true }
             if !images.isEmpty {
@@ -114,7 +125,7 @@ struct TaskComments: View {
                 Button(hasDraft ? "Discard" : "Cancel") { closeComposer() }
                     .buttonStyle(.link).font(.caption)
                 Spacer(minLength: 0)
-                Button(posting ? "Posting…" : "Post comment", action: post)
+                Button(posting ? "Sending…" : TaskRevisionRequestCopy.send, action: post)
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && images.isEmpty)
             }
         }
@@ -187,12 +198,12 @@ struct TaskComments: View {
     private func attach() {
         model.perform {
             let panel = NSOpenPanel()
-            panel.title = "Attach screenshots to your comment"
+            panel.title = "Attach screenshots to your revision request"
             panel.allowsMultipleSelection = true
             panel.allowedContentTypes = [.png, .jpeg, .webP]
             guard await panel.begin() == .OK else { return }
             guard panel.urls.count <= 3 - images.count else {
-                throw attachmentFailure("Attach up to three screenshots per comment.")
+                throw attachmentFailure("Attach up to three screenshots per revision request.")
             }
             let files = panel.urls
             let prepared = try await Task.detached {
@@ -232,7 +243,7 @@ struct TaskComments: View {
             do {
                 try await model.mutate("add_user_comment", fields)
                 closeComposer()
-                feedback = assigned && item.status == .working ? "Comment saved for the next agent check." : "Comment saved."
+                feedback = assigned && item.status == .working ? "Revision request saved for the next agent check." : "Revision request saved for the next agent run."
                 await load()
             } catch { feedback = error.localizedDescription }
         }

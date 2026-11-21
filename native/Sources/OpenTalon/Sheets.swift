@@ -564,7 +564,9 @@ private struct SendView: View {
             } else if options == nil && error == nil {
                 ProgressView().controlSize(.small)
             }
-            TextField("Extra direction (optional)", text: $dispatchComment, axis: .vertical)
+            Text("Revision request (optional)").font(.caption).foregroundStyle(palette.muted)
+            TextField(TaskRevisionRequestCopy.field, text: $dispatchComment,
+                      prompt: Text(TaskRevisionRequestCopy.example), axis: .vertical)
                 .textFieldStyle(.plain).lineLimit(2...4).padding(12).surface(10)
                 .accessibilityIdentifier("agentDispatchComment")
             DisclosureGroup("Agent setup", isExpanded: $showSetup) {

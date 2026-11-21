@@ -128,7 +128,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         guard model?.draftDirty == true else { return true }
         let alert = NSAlert()
         alert.messageText = "Your task has unsaved text"
-        alert.informativeText = "Save or discard the task or comment draft before closing."
+        alert.informativeText = "Save or discard the task or revision request draft before closing."
         alert.addButton(withTitle: "Keep editing")
         if let window, window.isVisible { alert.beginSheetModal(for: window) }
         else { alert.runModal() }

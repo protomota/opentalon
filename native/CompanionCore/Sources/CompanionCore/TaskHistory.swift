@@ -161,7 +161,7 @@ public struct TaskHistoryView: View {
             MarkdownPlanPreview(entry.state.planMarkdown)
                 .padding(16).background(colors.card, in: RoundedRectangle(cornerRadius: 18))
         }
-        Text("Restores task fields, plan, project and status. Comments stay in their current thread. Active agent work stops. Sending to an agent requires a new Send action. Archived revisions reopen in the project.")
+        Text("Restores task fields, plan, project and status. Revision requests stay with the task. Active agent work stops. Sending to an agent requires a new Send action. Archived revisions reopen in the project.")
             .font(.footnote).foregroundStyle(colors.muted)
         if confirming {
             Text("Restore revision \(entry.version)? The current version will remain in history.").font(.headline)

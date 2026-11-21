@@ -2448,18 +2448,19 @@ private struct PhoneAgentChooser: View {
                 }
                 .listRowBackground(colors.card)
 
-                Section("Comment (optional)") {
+                Section("Revision request (optional)") {
                     if snapshot.supportsDispatchComments {
-                        TextField("Add context or instructions for the agent", text: $comment, axis: .vertical)
+                        TextField(TaskRevisionRequestCopy.field, text: $comment,
+                                  prompt: Text(TaskRevisionRequestCopy.example), axis: .vertical)
                             .lineLimit(4...8)
                             .accessibilityIdentifier("sendComment")
                         if commentText.utf16.count > 10_000 {
-                            Text("Comments can be up to 10,000 characters.")
+                            Text("Revision requests can be up to 10,000 characters.")
                                 .font(.caption)
                                 .foregroundStyle(colors.danger)
                         }
                     } else {
-                        Text("Update OpenTalon on your Mac to include a comment when you send.")
+                        Text("Update OpenTalon on your Mac to include a revision request when you send.")
                             .foregroundStyle(colors.muted)
                     }
                 }
@@ -2714,7 +2715,6 @@ private struct TaskView: View {
     @State private var notesEdit: NotesEdit?
     @State private var dueDateEdit: DueDateEdit?
     @State private var showComment = false
-    @State private var keepCommentDraftOnCancel = false
     @State private var comment = ""
     @State private var commentWorkspaceID: UUID?
     @State private var commentSaved = false
@@ -2778,7 +2778,7 @@ private struct TaskView: View {
                                 PhoneActionLabel(title: "View earlier activity", systemImage: "clock.arrow.circlepath")
                             }.accessibilityIdentifier("earlierTaskActivity")
                         }
-                        Text("Update OpenTalon on your Mac to link agent responses to your comments.").font(.caption).foregroundStyle(colors.muted)
+                        Text("Update OpenTalon on your Mac to link agent responses to your revision requests.").font(.caption).foregroundStyle(colors.muted)
                     }
                 }.listRowBackground(colors.card)
                 Section("History") {
@@ -2885,7 +2885,7 @@ private struct TaskView: View {
                 organize(task, destination: .trash)
             }
             .phoneConfirmation("Delete this task permanently?", isPresented: $confirmArchiveDeletion,
-                               message: "“\(task.title)” and its comments will be permanently deleted. This can’t be undone.",
+                               message: "“\(task.title)” and its revision requests will be permanently deleted. This can’t be undone.",
                                confirm: "Delete Permanently", role: .destructive) {
                 guard workspace.snapshot?.workspaceID == snapshot.workspaceID else { return }
                 queue(.removeArchived(taskID: task.id, revision: task.revision, permanently: true))
@@ -2936,7 +2936,7 @@ private struct TaskView: View {
             .sheet(item: $dueDateEdit) { edit in
                 DueDateEditor(edit: edit)
             }
-            .sheet(isPresented: $showComment, onDismiss: finishComment) {
+            .sheet(isPresented: $showComment, onDismiss: saveCommentDraft) {
                 commentEditor
             }
             .sheet(isPresented: $showSend) {
@@ -3054,7 +3054,7 @@ private struct TaskView: View {
         } label: {
             quickActionLabel("Send to agent", systemImage: "paperplane")
         }
-        .accessibilityHint("Opens agent, model, and comment options")
+        .accessibilityHint("Opens agent, model, and revision request options")
         .accessibilityIdentifier("taskQuickSend")
     }
 
@@ -3262,10 +3262,10 @@ private struct TaskView: View {
     }
 
     private func comments(for task: PhoneTask) -> some View {
-        Section("Comments") {
+        Section(TaskRevisionRequestCopy.heading) {
             if let commentsByTask = workspace.snapshot?.commentsByTask {
                 let userComments = (commentsByTask[task.id] ?? []).filter { $0.isUserComment(hasSeparatedActivity: workspace.snapshot?.activityByTask != nil) } + workspace.acknowledgedLegacyComments(for: task.id)
-                if userComments.isEmpty { Text("No comments yet.").font(.caption).foregroundStyle(colors.muted) }
+                if userComments.isEmpty { Text("No revision requests yet.").font(.caption).foregroundStyle(colors.muted) }
                 ForEach(userComments) { entry in
                     VStack(alignment: .leading, spacing: 4) {
                         if !entry.text.isEmpty { Text(entry.text).textSelection(.enabled) }
@@ -3288,10 +3288,9 @@ private struct TaskView: View {
                     }
                 }
                 Button {
-                    keepCommentDraftOnCancel = false
                     showComment = true
                 } label: {
-                    PhoneActionLabel(title: commentText.isEmpty ? "Write a comment" : "Continue comment", systemImage: "square.and.pencil")
+                    PhoneActionLabel(title: commentText.isEmpty ? "Request a revision" : "Continue revision request", systemImage: "square.and.pencil")
                 }
                 if let commentError {
                     Text(commentError).font(.caption).foregroundStyle(colors.danger)
@@ -3299,7 +3298,7 @@ private struct TaskView: View {
                     savedCommentLabel("Saved").font(.caption)
                 }
             } else {
-                Text("Update OpenTalon on your Mac to sync ticket comments here.")
+                Text("Update OpenTalon on your Mac to sync revision requests here.")
                     .foregroundStyle(.secondary)
             }
         }
@@ -3323,12 +3322,10 @@ private struct TaskView: View {
     }
 
     private var commentEditor: some View {
-        CommentEditor(text: $comment, done: { showComment = false }, cancel: {
-            keepCommentDraftOnCancel = true
-            showComment = false
-        }) {
+        CommentEditor(text: $comment, canSend: !commentText.isEmpty && !commentTooLong,
+                      send: finishComment, cancel: { showComment = false }) {
             if commentTooLong {
-                Text("Comments can be up to 10,000 characters.").foregroundStyle(colors.danger)
+                Text("Revision requests can be up to 10,000 characters.").foregroundStyle(colors.danger)
             } else if let commentError {
                 Text(commentError).foregroundStyle(colors.danger)
             } else if !commentText.isEmpty, let commentWorkspaceID,
@@ -3356,13 +3353,13 @@ private struct TaskView: View {
         do {
             try workspace.saveCommentDraft(comment, for: taskID, in: commentWorkspaceID)
         } catch {
-            commentError = "Couldn’t save the comment draft. \(error.localizedDescription)"
+            commentError = "Couldn’t save the revision request draft. \(error.localizedDescription)"
         }
     }
 
     private func finishComment() {
         guard let commentWorkspaceID, workspace.snapshot?.workspaceID == commentWorkspaceID else { return }
-        guard !keepCommentDraftOnCancel, phase == .active, !commentText.isEmpty, !commentTooLong else {
+        guard phase == .active, !commentText.isEmpty, !commentTooLong else {
             saveCommentDraft()
             return
         }
@@ -3371,8 +3368,9 @@ private struct TaskView: View {
             comment = ""
             commentSaved = true
             commentError = nil
+            showComment = false
         } catch {
-            commentError = "Couldn’t save the comment. \(error.localizedDescription)"
+            commentError = "Couldn’t send the revision request. \(error.localizedDescription)"
         }
     }
 
@@ -3389,14 +3387,15 @@ private struct CommentEditor<Status: View>: View {
     @Environment(\.phoneColors) private var colors
     @FocusState private var editing: Bool
     @Binding var text: String
-    let done: () -> Void
+    let canSend: Bool
+    let send: () -> Void
     let cancel: () -> Void
     @ViewBuilder let status: () -> Status
 
     var body: some View {
         VStack(spacing: 12) {
             HStack {
-                Text("Comment")
+                Text(TaskRevisionRequestCopy.field)
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
                 Spacer(minLength: 12)
@@ -3406,14 +3405,27 @@ private struct CommentEditor<Status: View>: View {
                 .focused($editing)
                 .scrollContentBackground(.hidden)
                 .foregroundStyle(colors.text)
+                .overlay(alignment: .topLeading) {
+                    if text.isEmpty {
+                        Text(TaskRevisionRequestCopy.example)
+                            .foregroundStyle(colors.muted)
+                            .padding(.leading, 5)
+                            .padding(.top, 8)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
                 .padding(8)
                 .background(colors.card, in: .rect(cornerRadius: 12))
                 .frame(minHeight: 44)
-                .accessibilityLabel("Comment")
+                .accessibilityLabel(TaskRevisionRequestCopy.field)
+                .accessibilityHint(TaskRevisionRequestCopy.example)
             HStack(spacing: 12) {
                 status().font(.caption)
                 Spacer(minLength: 0)
-                editorButton("Done", action: done)
+                Button(TaskRevisionRequestCopy.send, action: send)
+                    .buttonStyle(PhoneActionButtonStyle())
+                    .disabled(!canSend)
             }
         }
         .padding(.horizontal, 20)
@@ -3656,7 +3668,7 @@ private struct QueueView: View {
         case .emptyTrash: "Empty Trash"
         case .manageArchive(_, _, let permanently): permanently ? "Delete archived tasks" : "Move archived tasks to Trash"
         case .reorderTask: "Reorder task"
-        case .comment: "Post comment"
+        case .comment: "Send revision request"
         case .editNotes: "Edit notes"
         case .editField(_, _, .status(let status, _, _, _)), .setField(_, _, .status(let status, _, _, _)): status.mobileStage
         case .editField(_, _, let edit), .setField(_, _, let edit): edit.label

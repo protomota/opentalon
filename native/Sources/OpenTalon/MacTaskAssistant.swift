@@ -181,7 +181,7 @@ final class MacTaskAssistant {
                 fields["requestKey"] = "mac:" + UUID().uuidString
                 model.pendingSend = (name: "move_task", input: fields, title: task.title)
                 model.sheet = .send
-                return try record(command, "Send dialog opened for \(task.reference). Choose the agent, model and optional comment, then Send.", taskID: task.id)
+                return try record(command, "Send dialog opened for \(task.reference). Choose the agent, model and optional revision request, then Send.", taskID: task.id)
             case "archive", "trash":
                 review = Review(task: task, operation: command.operation)
                 return try record(command, "Review \(command.operation) for \(task.reference). Nothing has changed yet.", taskID: task.id)

@@ -539,7 +539,7 @@ class Store {
             resumeThread: true,
             commentIds: pending.map((comment) => comment.id),
             state: 'queued',
-            summary: 'Comments queued for the existing conversation.',
+            summary: 'Revision requests queued for the existing conversation.',
             createdAt: new Date().toISOString(),
           })
           this.assignAgent(task.id, job.id)
@@ -848,7 +848,7 @@ class Store {
     const status = a.status || task.status
     const sending = status === 'Sent to agent' && task.status !== status
     if ((a.agent || a.model || a.dispatchComment !== undefined) && !sending)
-      throw new AppError('INVALID_ARGUMENT', 'Agent options and dispatch comments require sending a task.')
+      throw new AppError('INVALID_ARGUMENT', 'Agent options and revision requests for dispatch require sending a task.')
     if (task.archivedAt && a.status !== undefined) {
       this.db.prepare('UPDATE tasks SET archived_at=NULL WHERE id=?').run(task.id)
       task = { ...task, archivedAt: null }
@@ -985,7 +985,7 @@ class Store {
     return job
   }
   async execute(name, a, origin = 'Connected agent') {
-    if (a.dispatchComment && !origin.startsWith('You')) throw new AppError('INVALID_ARGUMENT','Dispatch comments are only for text entered by the user. Record agent context with add_task_activity.')
+    if (a.dispatchComment && !origin.startsWith('You')) throw new AppError('INVALID_ARGUMENT','Revision requests for dispatch are only for text entered by the user. Record agent context with add_task_activity.')
     const markdown = name === 'set_task_plan' ? a.markdown : a.planMarkdown
     if (markdown !== undefined && (typeof markdown !== 'string' || markdown.length > 100000 ||
         !markdown.isWellFormed() || markdown.includes('\0')))
@@ -1148,7 +1148,7 @@ class Store {
         result = { reordered: a.taskIds.length, revision }
       } else if (name === 'retry_task_comment') {
         const row = this.db.prepare('SELECT * FROM task_comments WHERE id=?').get(a.id)
-        if (!row) throw new AppError('NOT_FOUND', 'This comment no longer exists.')
+        if (!row) throw new AppError('NOT_FOUND', 'This revision request no longer exists.')
         if (!this.assignedRun(row.task_id))
           throw new AppError(
             'TASK_MANUAL',
@@ -1156,7 +1156,7 @@ class Store {
           )
         const data = JSON.parse(row.data)
         if (data.delivery !== 'needs-review')
-          throw new AppError('INVALID_STATE', 'This comment is already queued or delivered.')
+          throw new AppError('INVALID_STATE', 'This revision request is already queued or delivered.')
         const previous = this.agentJobs().find((job) => job.taskId === row.task_id)
         if (previous?.state === 'interrupted') this.saveAgentJob({ ...previous, state: 'review' })
         this.db
@@ -1170,9 +1170,9 @@ class Store {
         if(task.deleted) throw new AppError('IN_TRASH','Restore the task before adding activity.')
         if(!a.text.trim() && !a.images?.length) throw new AppError('EMPTY_COMMENT','Write an activity update or attach a screenshot.')
         const comment = a.commentId && this.comments(a.taskId).find(comment => comment.id === a.commentId && comment.source === 'user')
-        if (a.commentId && !comment) throw new AppError('NOT_FOUND','Choose a user comment on this task.')
+        if (a.commentId && !comment) throw new AppError('NOT_FOUND','Choose a revision request on this task.')
         const runId = this.assignedRun(a.taskId)
-        const activity = taskActivity.record(this,a.taskId,{actor:origin,kind:'agent',summary:comment?'Response to your comment':'Agent update',detail:a.text,data:{...(runId?{runId}:{}),...(comment?{commentID:comment.id}:{})}},a.images || [])
+        const activity = taskActivity.record(this,a.taskId,{actor:origin,kind:'agent',summary:comment?'Response to your revision request':'Agent update',detail:a.text,data:{...(runId?{runId}:{}),...(comment?{commentID:comment.id}:{})}},a.images || [])
         if (comment) this.db.prepare("UPDATE task_comments SET data=json_set(data,'$.actedOnActivityID',?) WHERE id=?").run(activity.id,comment.id)
         result = {activity,...(name === 'add_task_comment' ? {comment:activity,redirectedToActivity:true} : {})}
       } else if (name === 'set_agent_settings') {
@@ -1316,7 +1316,7 @@ class Store {
           .run(a.planMarkdown ?? legacyPlan(a.notes), id)
         result = { task: this.task(id) }
         if ((a.agent || a.model || a.dispatchComment !== undefined) && status !== 'Sent to agent')
-          throw new AppError('INVALID_ARGUMENT', 'Agent options and dispatch comments require sending a task.')
+          throw new AppError('INVALID_ARGUMENT', 'Agent options and revision requests for dispatch require sending a task.')
         if (status === 'Sent to agent') this.enqueueAgent(result.task, a.agent, a.model, a.dispatchComment)
       } else if (['update_task', 'move_task', 'trash_task', 'restore_task'].includes(name)) {
         let task = this.task(a.id)
@@ -1507,7 +1507,7 @@ class Store {
           for (const task of this.snapshot().tasks)
             if (!task.deleted && task.status === 'Sent to agent')
               this.move(task, { status: 'To do' }, revision)
-          for (const task of this.db.prepare('SELECT id FROM tasks').all()) taskActivity.record(this,task.id,{actor:origin,kind:'restore',summary:'Workspace restored from backup',detail:'Task data, comments, activity and revision history were restored from the reviewed backup.'})
+          for (const task of this.db.prepare('SELECT id FROM tasks').all()) taskActivity.record(this,task.id,{actor:origin,kind:'restore',summary:'Workspace restored from backup',detail:'Task data, revision requests, activity and revision history were restored from the reviewed backup.'})
           result = { restored: restore.summary, safetyBackup: preview.safetyBackup }
         } else {
           const deletion = preview.action === 'purge_archived_tasks'

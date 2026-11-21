@@ -65,7 +65,7 @@ function page(store, id, beforeSequence, limit = 20, commentID) {
     const comment = store
       .comments(task.id)
       .find((item) => item.id === commentID && item.source === 'user')
-    if (!comment) throw new AppError('NOT_FOUND', 'This user comment is no longer available.')
+    if (!comment) throw new AppError('NOT_FOUND', 'This revision request is no longer available.')
     // Only the comment's own assigned run and explicit responses belong in this drill-down.
     filter = " AND (json_extract(data,'$.commentID')=? OR json_extract(data,'$.runId')=? OR id=?)"
     parameters = [commentID, comment.runId || '', comment.activityID || '']

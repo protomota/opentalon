@@ -121,7 +121,7 @@ struct SettingsView: View {
             if legacyWorkspaceAvailable {
                 Button("Copy from the Electron app…", action: copyElectron)
             }
-            Text("Backups include projects, tasks, Trash, appearance, comments, screenshots, and agent history. Restore saves a safety backup and never dispatches restored work.")
+            Text("Backups include projects, tasks, Trash, appearance, revision requests, screenshots, and agent history. Restore saves a safety backup and never dispatches restored work.")
                 .font(.caption).foregroundStyle(palette.muted)
             if let note { Text(note).font(.caption).textSelection(.enabled) }
             if let error { Text(error).font(.caption).foregroundStyle(palette.danger) }

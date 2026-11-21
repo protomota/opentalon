@@ -108,7 +108,7 @@ test('public MCP reports and legacy comment calls write Activity; only the priva
   )
   const entries = (await activity(f, task.id)).entries
   assert.equal(entries.filter((e) => e.kind === 'agent').length, 2)
-  assert.equal(entries[0].summary, 'Added a comment')
+  assert.equal(entries[0].summary, 'Saved a revision request')
   assert.equal(entries[0].detail, '')
   assert.equal(entries[0].actor, 'You · test')
   await assert.rejects(

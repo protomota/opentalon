@@ -54,10 +54,12 @@ struct WorkspaceView: View {
                         Spacer()
                         Button("Ask OpenTalon", systemImage: "sparkles") { model.navigate(.assistant) }
                             .accessibilityIdentifier("askOpenTalon")
-                        Button("Ask my agent", systemImage: "bubble.left.and.text.bubble.right") {
-                            model.sheet = .agentChat
+                        if model.canUseAgents {
+                            Button("Ask my agent", systemImage: "bubble.left.and.text.bubble.right") {
+                                model.sheet = .agentChat
+                            }
+                            .keyboardShortcut("k", modifiers: [.command, .shift])
                         }
-                        .keyboardShortcut("k", modifiers: [.command, .shift])
                     }
                     .padding(.horizontal, 24)
                     .padding(.vertical, 8)

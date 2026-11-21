@@ -35,7 +35,8 @@ public final class LocalCompanionTransport: CompanionTransport {
         if latest.workspaceID == cached?.workspaceID, latest.revision == cached?.revision,
            latest.projectionVersion == cached?.projectionVersion,
            latest.defaultAgent == cached?.defaultAgent, latest.availableAgents == cached?.availableAgents,
-           latest.agentModels == cached?.agentModels { return .unchanged }
+           latest.agentModels == cached?.agentModels,
+           latest.agentConnectionReady == cached?.agentConnectionReady { return .unchanged }
         return .updated(latest)
     }
 

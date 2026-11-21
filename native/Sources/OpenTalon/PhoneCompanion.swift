@@ -15,6 +15,7 @@ final class PhoneCompanion {
         let workspace: Workspace
         let defaultAgent: PhoneAgent
         let availableAgents: [PhoneAgent]
+        let agentConnectionReady: Bool
         let agentModels: [AgentModelChoice]
         let commentsByTask: [String: [PhoneComment]]
         let historyByTask: [String: TaskHistoryPage]
@@ -146,7 +147,7 @@ final class PhoneCompanion {
                              captureProjectID: workspace.selectedBoard, macName: Host.current().localizedName ?? "Mac",
                              supportsTaskOverrides: true, supportsBulkArchive: true, supportsTaskReordering: true,
                              supportsTaskOrganization: true, supportsTaskPlans: true, supportsTaskTypes: true, historyByTask: snapshot.historyByTask, activityByTask: snapshot.activityByTask, supportsCommentActivity: true,
-                             includesCompletionDates: true)
+                             includesCompletionDates: true, agentConnectionReady: snapshot.agentConnectionReady)
     }
 
     private func apply(_ request: PhoneRequest, service: Service) async throws -> PhoneReceipt {
@@ -216,7 +217,8 @@ final class PhoneCompanion {
             action = "add_user_comment"
             input["taskId"] = id
             input["text"] = text
-            input["notifyAgent"] = true
+            let connection: Connection = try await service.call("connection_status")
+            input["notifyAgent"] = connection.enabled && connection.running
         case .editNotes(let id, let revision, let notes):
             action = "update_task"
             input["id"] = id

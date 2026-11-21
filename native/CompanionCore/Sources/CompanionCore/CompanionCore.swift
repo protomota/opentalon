@@ -213,6 +213,7 @@ public struct PhoneSnapshot: Codable, Sendable {
     public let defaultAgent: PhoneAgent?
     public let availableAgents: [PhoneAgent]?
     public let agentModels: [AgentModelChoice]?
+    public let agentConnectionReady: Bool?
     public let commentsByTask: [String: [PhoneComment]]?
     public let trashedTasks: [PhoneTrashedTask]?
     public let captureProjectID: String?
@@ -242,7 +243,7 @@ public struct PhoneSnapshot: Codable, Sendable {
                 supportsTaskOverrides: Bool = false, supportsBulkArchive: Bool = false,
                 supportsTaskReordering: Bool = false, supportsTaskOrganization: Bool = false,
                 supportsTaskPlans: Bool = false, supportsTaskTypes: Bool = false, historyByTask: [String: TaskHistoryPage]? = nil, activityByTask: [String: TaskActivityPage]? = nil, supportsCommentActivity: Bool = false,
-                includesCompletionDates: Bool = false) {
+                includesCompletionDates: Bool = false, agentConnectionReady: Bool? = nil) {
         version = 1
         self.workspaceID = workspaceID
         self.revision = revision
@@ -252,6 +253,7 @@ public struct PhoneSnapshot: Codable, Sendable {
         self.defaultAgent = defaultAgent
         self.availableAgents = availableAgents
         self.agentModels = agentModels
+        self.agentConnectionReady = agentConnectionReady
         self.commentsByTask = commentsByTask
         self.trashedTasks = trashedTasks
         self.captureProjectID = captureProjectID
@@ -272,6 +274,8 @@ public struct PhoneSnapshot: Codable, Sendable {
         completionDates = includesCompletionDates ? true : nil
     }
 
+    public var canUseAgents: Bool { agentConnectionReady == true }
+
     public var supportsNoteEditing: Bool { noteEditing == true }
     public var supportsFieldEditing: Bool { fieldEditing == true }
     public var includesCardMetadata: Bool { cardMetadata == true }
@@ -285,6 +289,7 @@ public struct PhoneSnapshot: Codable, Sendable {
     public var supportsTaskTypes: Bool { taskTypes == true }
 
     var projectionVersion: Int {
+        if agentConnectionReady != nil { return 21 }
         if completionDates == true { return 20 }
         if supportsCommentActivity { return 19 }
         if activityByTask != nil { return 18 }
@@ -310,7 +315,7 @@ public struct PhoneSnapshot: Codable, Sendable {
     func shouldReplace(_ stored: PhoneSnapshot) -> Bool {
         if revision != stored.revision { return revision > stored.revision }
         if projectionVersion != stored.projectionVersion { return projectionVersion > stored.projectionVersion }
-        return defaultAgent != stored.defaultAgent || availableAgents != stored.availableAgents ||
+        return agentConnectionReady != stored.agentConnectionReady || defaultAgent != stored.defaultAgent || availableAgents != stored.availableAgents ||
             agentModels != stored.agentModels || captureProjectID != stored.captureProjectID || macName != stored.macName
     }
 }

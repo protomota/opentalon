@@ -216,55 +216,58 @@ struct AgentControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let settings {
-                if settingUpSend, let onlyAvailableAgent {
-                    AgentBrandLabel(agent: onlyAvailableAgent)
-                } else {
-                    HStack(spacing: 10) {
-                        Text("Default agent").foregroundStyle(palette.muted).accessibilityHidden(true)
-                        BoardDropdown(selection: Binding(get: { settings.defaultAgent }, set: { agent in
-                            var updated = settings
-                            updated.defaultAgent = agent
-                            save(updated)
-                        }), title: "Default agent", symbol: "terminal", choices: Agent.allCases,
-                                      compact: true, agentBrand: { $0 }, label: \.title)
-                            .frame(width: 185)
-                    }
-                    if runtimes[settings.defaultAgent.rawValue]?.installed == false {
-                        if let guide = URL(string: settings.defaultAgent.guide) {
-                            Link(destination: guide) {
-                                AgentBrandLabel(agent: settings.defaultAgent, title: "Install \(settings.defaultAgent.title)")
+                Group {
+                    if settingUpSend, let onlyAvailableAgent {
+                        AgentBrandLabel(agent: onlyAvailableAgent)
+                    } else {
+                        HStack(spacing: 10) {
+                            Text("Default agent").foregroundStyle(palette.muted).accessibilityHidden(true)
+                            BoardDropdown(selection: Binding(get: { settings.defaultAgent }, set: { agent in
+                                var updated = settings
+                                updated.defaultAgent = agent
+                                save(updated)
+                            }), title: "Default agent", symbol: "terminal", choices: Agent.allCases,
+                                          compact: true, agentBrand: { $0 }, label: \.title)
+                                .frame(width: 185)
+                        }
+                        if runtimes[settings.defaultAgent.rawValue]?.installed == false {
+                            if let guide = URL(string: settings.defaultAgent.guide) {
+                                Link(destination: guide) {
+                                    AgentBrandLabel(agent: settings.defaultAgent, title: "Install \(settings.defaultAgent.title)")
+                                }
                             }
                         }
                     }
-                }
-                HStack(spacing: 10) {
-                    Text("Permissions").foregroundStyle(palette.muted).accessibilityHidden(true)
-                    BoardDropdown(selection: Binding(get: { settings.permissionMode }, set: { mode in
-                        var updated = settings
-                        updated.permissionMode = mode
-                        save(updated)
-                    }), title: "Permissions", symbol: "lock.shield", choices: AgentPermission.allCases,
-                                  compact: true, label: \.title)
-                        .frame(width: 185)
-                }
-                Text(settings.permissionMode.detail)
-                    .font(.caption).foregroundStyle(palette.muted)
-                HStack {
-                    Label(settings.workingFolder.isEmpty ? "No working folder selected" : settings.workingFolder,
-                          systemImage: "folder")
-                        .font(.caption).foregroundStyle(palette.muted).lineLimit(2)
-                    Spacer(minLength: 4)
-                    Button("Choose working folder…", systemImage: "folder") { chooseFolder(settings) }
-                    if !settings.workingFolder.isEmpty {
-                        Button("Clear") {
+                    HStack(spacing: 10) {
+                        Text("Permissions").foregroundStyle(palette.muted).accessibilityHidden(true)
+                        BoardDropdown(selection: Binding(get: { settings.permissionMode }, set: { mode in
                             var updated = settings
-                            updated.workingFolder = ""
+                            updated.permissionMode = mode
                             save(updated)
+                        }), title: "Permissions", symbol: "lock.shield", choices: AgentPermission.allCases,
+                                      compact: true, label: \.title)
+                            .frame(width: 185)
+                    }
+                    Text(settings.permissionMode.detail)
+                        .font(.caption).foregroundStyle(palette.muted)
+                    HStack {
+                        Label(settings.workingFolder.isEmpty ? "No working folder selected" : settings.workingFolder,
+                              systemImage: "folder")
+                            .font(.caption).foregroundStyle(palette.muted).lineLimit(2)
+                        Spacer(minLength: 4)
+                        Button("Choose working folder…", systemImage: "folder") { chooseFolder(settings) }
+                        if !settings.workingFolder.isEmpty {
+                            Button("Clear") {
+                                var updated = settings
+                                updated.workingFolder = ""
+                                save(updated)
+                            }
                         }
                     }
+                    Text("New Codex chats share one project for this folder and appear in Recents.")
+                        .font(.caption).foregroundStyle(palette.muted)
                 }
-                Text("New Codex chats share one project for this folder and appear in Recents.")
-                    .font(.caption).foregroundStyle(palette.muted)
+                .disabled(!model.canUseAgents)
                 if let connection {
                     Toggle("Enable local agent connection", isOn: Binding(
                         get: { connection.enabled },

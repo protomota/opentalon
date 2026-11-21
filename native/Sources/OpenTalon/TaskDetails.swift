@@ -255,7 +255,7 @@ struct TaskDetails: View {
                 GridRow {
                     property("Status")
                     BoardDropdown(selection: Binding(get: { item.status }, set: { model.move(item, to: $0) }),
-                                  title: "Status", symbol: item.status.symbol, choices: WorkStatus.allCases,
+                                  title: "Status", symbol: item.status.symbol, choices: model.editableStatuses,
                                   compact: true, label: \.rawValue)
                         .disabled(dirty || saving || commentDirty)
                 }
@@ -407,7 +407,7 @@ private struct RunDetails: View {
                     .frame(maxHeight: 135)
                 HStack {
                     Button("Deny") { answer(approval, allow: false) }
-                    if approval.canApprove { Button("Allow once") { answer(approval, allow: true) } }
+                    if approval.canApprove && model.canUseAgents { Button("Allow once") { answer(approval, allow: true) } }
                 }
             }
             HStack {

@@ -63,10 +63,11 @@ struct KanbanView: View {
             .padding(.bottom, 18)
 
             GeometryReader { geometry in
-                let width = max(177, (geometry.size.width - 54 - 3 * 15) / 4)
+                let statuses = WorkStatus.allCases.filter { $0 != .sent || model.canUseAgents || !model.column(.sent).isEmpty }
+                let width = max(177, (geometry.size.width - 54 - CGFloat(statuses.count - 1) * 15) / CGFloat(statuses.count))
                 ThemedScrollView(.horizontal) {
                     HStack(alignment: .top, spacing: 15) {
-                        ForEach(WorkStatus.allCases) { status in
+                        ForEach(statuses) { status in
                             ColumnView(status: status, drag: drag)
                                 .frame(width: width)
                                 .frame(height: max(220, geometry.size.height - 23))
@@ -273,8 +274,10 @@ private struct ColumnView: View {
                 .accessibilityIdentifier("doneColumnSort")
                 .onChange(of: model.doneOrder) { scrollID = model.column(.done).first?.id }
             }
-            IconButton(symbol: "plus", label: "Add task in \(status.rawValue)") { model.newTask(status) }
-                .foregroundStyle(palette.muted)
+            if status != .sent || model.canUseAgents {
+                IconButton(symbol: "plus", label: "Add task in \(status.rawValue)") { model.newTask(status) }
+                    .foregroundStyle(palette.muted)
+            }
         }
         .font(.system(size: 13))
         .padding(.horizontal, 13)
@@ -285,7 +288,7 @@ private struct ColumnView: View {
 
     private func endOfColumn(isEmpty: Bool) -> some View {
         VStack {
-            if isEmpty {
+            if isEmpty, status != .sent || model.canUseAgents {
                 Button {
                     model.newTask(status)
                 } label: {
@@ -382,7 +385,7 @@ struct TaskCard: View {
         .contextMenu {
             Button("Open task") { model.select(item) }
             Menu("Move to") {
-                ForEach(WorkStatus.allCases.filter { $0 != item.status }) { status in
+                ForEach(model.editableStatuses.filter { $0 != item.status }) { status in
                     Button(status.rawValue) { model.move(item, to: status) }
                 }
             }

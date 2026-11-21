@@ -51,9 +51,14 @@ final class PhoneWorkspace {
     }
 
     private enum QueueError: LocalizedError {
-        case changePending
+        case changePending, agentDisconnected
 
-        var errorDescription: String? { "Wait for the current task change to sync with your Mac." }
+        var errorDescription: String? {
+            switch self {
+            case .changePending: "Wait for the current task change to sync with your Mac."
+            case .agentDisconnected: "Connect MCP in Settings on your Mac to use agents."
+            }
+        }
     }
 
     enum PlanConflict: LocalizedError {
@@ -138,6 +143,7 @@ final class PhoneWorkspace {
     func queue(_ action: PhoneRequest.Action) throws {
         guard let snapshot else { throw CompanionSyncError.missingWorkspace }
         let request = PhoneRequest(workspaceID: snapshot.workspaceID, action: action)
+        try requireAgentConnection(for: action)
         if case .savePlan(_, _, let markdown) = action {
             guard snapshot.supportsTaskPlans else { throw CompanionSyncError.missingWorkspace }
             try TaskPlan.validate(markdown)
@@ -164,10 +170,22 @@ final class PhoneWorkspace {
         try enqueue(request, in: state)
     }
 
+    private func requireAgentConnection(for action: PhoneRequest.Action) throws {
+        let sends: Bool = switch action {
+        case .send, .create(_, _, _, _, true, _, _, _, _, _, _, _),
+             .editField(_, _, .status(.sent, _, _, _)), .setField(_, _, .status(.sent, _, _, _)): true
+        default: false
+        }
+        if sends && snapshot?.canUseAgents != true {
+            throw QueueError.agentDisconnected
+        }
+    }
+
     func queueField(_ edit: PhoneTaskFieldEdit, for task: PhoneTask, in workspaceID: UUID) throws {
         guard snapshot?.workspaceID == workspaceID, snapshot?.supportsFieldEditing == true else {
             throw CompanionSyncError.missingWorkspace
         }
+        if case .status(.sent, _, _, _) = edit, snapshot?.canUseAgents != true { throw QueueError.agentDisconnected }
         if edit.field == .issueType, snapshot?.supportsTaskTypes != true { throw CompanionSyncError.missingWorkspace }
         if snapshot?.supportsTaskOverrides == true {
             let current = snapshot?.tasks.first(where: { $0.id == task.id }) ?? task

@@ -2,6 +2,29 @@ import Foundation
 import Testing
 @testable import CompanionCore
 
+@Test @MainActor func mcpAvailabilitySyncsBothDirectionsWithoutATaskEdit() async throws {
+    let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let transport = LocalCompanionTransport(directory: folder)
+    try await transport.prepare(account: "test")
+    let id = UUID()
+    let legacy = PhoneSnapshot(workspaceID: id, revision: 7, projects: [], tasks: [], availableAgents: [.codex])
+    #expect(!legacy.canUseAgents)
+    var cached = legacy
+    for ready in [false, true, false, true] {
+        let updated = PhoneSnapshot(workspaceID: id, revision: 7, projects: [], tasks: [], availableAgents: [.codex], agentConnectionReady: ready)
+        #expect(updated.shouldReplace(cached))
+        try await transport.publish(updated)
+        guard case .updated(let incoming) = try await transport.snapshot(newerThan: cached) else {
+            Issue.record("MCP state was cached at the same task revision"); return
+        }
+        #expect(incoming.canUseAgents == ready)
+        cached = incoming
+    }
+    let encoded = try JSONEncoder().encode(cached)
+    #expect(try JSONDecoder().decode(PhoneSnapshot.self, from: encoded).canUseAgents)
+}
+
 @Test func doneOrderUsesRecordedCompletionAndStableLegacyFallback() {
     func task(_ id: String, created: Double?, completed: Double? = nil) -> PhoneTask {
         PhoneTask(id: id, projectID: "project", title: id, notes: "", definitionOfDone: "", status: .done,

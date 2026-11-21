@@ -90,6 +90,7 @@ struct WorkItem: Codable, Identifiable, Equatable {
 }
 
 struct Workspace: Decodable {
+    let agentConnectionReady: Bool?
     let theme: Theme
     let selectedBoard: String
     let preferencesRevision: Int

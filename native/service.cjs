@@ -83,12 +83,19 @@ async function chat(input) {
 
 async function dispatch(name, input, origin = 'Connected agent') {
   validateAction(name, input, true)
+  const sendsToAgent = input.status === 'Sent to agent' ||
+    (name === 'companion_set_task_field' && input.field === 'status' && input.value === 'Sent to agent')
+  if (sendsToAgent && (!connector.status().enabled || !connector.status().running))
+    throw new AppError('MCP_DISABLED', 'Connect MCP in Settings to use agents.')
   switch (name) {
     case 'check_task_comments':
+      if (!connector.status().enabled || !connector.status().running)
+        throw new AppError('MCP_DISABLED', 'Connect MCP in Settings to use agents.')
       if (runner.suspended || runner.stopping)
         throw new AppError('BUSY', 'Try again after the current workspace operation.')
       return store.queueCommentFollowups()
     case 'add_user_comment': {
+      if (!connector.status().enabled || !connector.status().running) input = { ...input, notifyAgent: false }
       const result = await store.dispatch(name, input, origin)
       if (input.notifyAgent)
         void store.queueCommentFollowups().catch((error) => console.error('OpenTalon comment dispatch:', error.message))
@@ -163,11 +170,13 @@ async function testConnection() {
 }
 
 function agentOptions() {
+  const connection = connector.status()
   const settings = store.agentSettings()
   const runtimes = runner.status()
   const availableAgents = Object.entries(runtimes).filter(([, runtime]) => runtime.installed).map(([agent]) => agent)
   const defaultAgent = availableAgents.length === 1 ? availableAgents[0] : settings.defaultAgent
   return {
+    agentConnectionReady: connection.enabled && connection.running,
     defaultAgent,
     availableAgents,
     agentModels: agentModels.filter(({ agent }) => availableAgents.includes(agent)),
@@ -179,7 +188,7 @@ async function privateAction(name, input) {
   switch (name) {
     case 'snapshot':
       validateAction(name, input, true)
-      return store.snapshot({ includeRecordedCompletions: true })
+      return { ...store.snapshot({ includeRecordedCompletions: true }), agentConnectionReady: connector.status().enabled && connector.status().running }
     case 'native_agent_options': return agentOptions()
     case 'native_phone_snapshot': {
       const workspace = store.snapshot({ includeRecordedCompletions: true })
@@ -310,6 +319,8 @@ async function main() {
           return
         }
         if (request.name === 'native_draft_task') {
+          if (!connector.status().enabled || !connector.status().running)
+            throw new AppError('MCP_DISABLED', 'Connect MCP in Settings to draft with an agent.')
           const idea = request.input?.idea
           if (typeof idea !== 'string' || !idea.trim() || idea.length > 2000)
             throw new AppError('INVALID_ARGUMENT', 'Enter an idea up to 2,000 characters.')

@@ -54,7 +54,7 @@ struct TaskComments: View {
                 }
                 .buttonStyle(GlassActionStyle())
             }
-            if assigned {
+            if assigned && model.canUseAgents {
                 Text("On an In progress task, new comments reach its agent conversation at the next five-minute check.")
                     .font(.caption).foregroundStyle(palette.muted)
             }
@@ -225,7 +225,7 @@ struct TaskComments: View {
         dirty = true
         let fields: [String: Any] = [
             "taskId": item.id, "text": text, "images": images.map(\.fields),
-            "notifyAgent": assigned, "requestKey": requestKey
+            "notifyAgent": assigned && model.canUseAgents, "requestKey": requestKey
         ]
         Task {
             defer { posting = false; dirty = hasDraft }

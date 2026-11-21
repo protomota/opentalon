@@ -54,6 +54,7 @@ public final class CompanionCloud: CompanionTransport {
     private var inspectedSnapshotTag: String?
     private var inspectedAvailableAgents: [PhoneAgent]?
     private var inspectedDefaultAgent: PhoneAgent?
+    private var inspectedAgentConnectionReady: Bool?
     private var inspectedAgentModels: [AgentModelChoice]?
     private var inspectedCaptureProjectID: String?
     private var inspectedMacName: String?
@@ -107,6 +108,7 @@ public final class CompanionCloud: CompanionTransport {
                    inspectedAvailableAgents == snapshot.availableAgents,
                    inspectedDefaultAgent == snapshot.defaultAgent,
                    inspectedAgentModels == snapshot.agentModels,
+                   inspectedAgentConnectionReady == snapshot.agentConnectionReady,
                    inspectedCaptureProjectID == snapshot.captureProjectID,
                    inspectedMacName == snapshot.macName,
                    inspectedProjectionVersion == snapshot.projectionVersion { return }
@@ -118,6 +120,7 @@ public final class CompanionCloud: CompanionTransport {
                     inspectedAvailableAgents = snapshot.availableAgents
                     inspectedDefaultAgent = snapshot.defaultAgent
                     inspectedAgentModels = snapshot.agentModels
+                    inspectedAgentConnectionReady = snapshot.agentConnectionReady
                     inspectedCaptureProjectID = snapshot.captureProjectID
                     inspectedMacName = snapshot.macName
                     inspectedProjectionVersion = snapshot.projectionVersion

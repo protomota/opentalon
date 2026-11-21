@@ -109,6 +109,33 @@ function localService(folder) {
   }
 }
 
+test('MCP availability gates chat and dispatch and is projected to mobile without a task edit', {
+  skip: !bundle, timeout: 30000,
+}, async (t) => {
+  const service = localService(directory(t))
+  t.after(() => service.stop())
+  await service.call('set_connection', { enabled: false })
+  const before = await service.call('snapshot')
+  assert.equal(before.agentConnectionReady, false)
+  assert.equal((await service.call('native_phone_snapshot')).agentConnectionReady, false)
+  await assert.rejects(service.call('native_agent_chat', { message: 'Hello', history: [] }), { code: 'CONNECTION_DISABLED' })
+  await assert.rejects(service.call('native_draft_task', { idea: 'Review the release' }), { code: 'MCP_DISABLED' })
+  await assert.rejects(service.call('check_task_comments'), { code: 'MCP_DISABLED' })
+  await service.call('set_connection', { enabled: true })
+  assert.equal((await service.call('snapshot')).agentConnectionReady, true)
+  assert.equal((await service.call('native_phone_snapshot')).agentConnectionReady, true)
+  assert.equal((await service.call('snapshot')).revision, before.revision)
+  await service.call('set_connection', { enabled: false })
+  assert.equal((await service.call('snapshot')).agentConnectionReady, false)
+  assert.equal((await service.call('native_phone_snapshot')).agentConnectionReady, false)
+  const { task } = await service.call('create_task', { requestKey: randomUUID(), boardId: before.boards[0].id, title: 'Manual task' })
+  await assert.rejects(service.call('move_task', { requestKey: randomUUID(), id: task.id, expectedRevision: task.revision,
+    boardId: task.boardId, status: 'Sent to agent' }), { code: 'MCP_DISABLED' })
+  const done = await service.call('move_task', { requestKey: randomUUID(), id: task.id, expectedRevision: task.revision,
+    boardId: task.boardId, status: 'Done' })
+  assert.equal(done.task.status, 'Done')
+})
+
 test('packaged local service copies a live WAL database and restores portable JSON with screenshots and Trash', {
   skip: !bundle, timeout: 30000,
 }, async (t) => {
@@ -145,7 +172,7 @@ test('packaged local service copies a live WAL database and restores portable JS
   const rejected = await call('get_task', { id: task.id })
   await assert.rejects(request(call, 'move_task', {
     id: task.id, expectedRevision: rejected.task.revision, status: 'Sent to agent',
-  }), { code: 'AGENT_SETUP_REQUIRED' })
+  }), { code: 'MCP_DISABLED' })
   const file = path.join(parent, 'portable.json')
   await request(call, 'create_backup', { destination: file, format: 'json' })
   assert.equal(JSON.parse(fs.readFileSync(file)).format, 'opentalon-backup')

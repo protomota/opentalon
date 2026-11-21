@@ -91,6 +91,14 @@ final class WorkspaceModel {
     }
 
     var boards: [Board] { workspace?.boards ?? [] }
+    var canUseAgents: Bool { workspace?.agentConnectionReady == true }
+    var editableStatuses: [WorkStatus] { WorkStatus.allCases.filter { $0 != .sent || canUseAgents } }
+
+    func requireAgentConnection() throws {
+        guard canUseAgents else {
+            throw ServiceFailure(code: "MCP_DISABLED", message: "Connect MCP in Settings on your Mac to use agents.")
+        }
+    }
     var tasks: [WorkItem] { workspace?.tasks ?? [] }
     var board: Board? {
         guard case .board(let id) = page else { return nil }
@@ -132,6 +140,10 @@ final class WorkspaceModel {
     func refresh() async throws {
         let previousTheme = workspace?.theme
         workspace = try await service.call("snapshot")
+        if !canUseAgents {
+            if case .agentChat = sheet { sheet = nil }
+            if case .send = sheet { sheet = nil; pendingSend = nil }
+        }
         if let theme = workspace?.theme, theme != previousTheme { appearanceChanged?(theme) }
         if case .board(let id) = page, !boards.contains(where: { $0.id == id }) {
             page = .dashboard
@@ -230,7 +242,7 @@ final class WorkspaceModel {
     }
 
     func newTask(_ status: WorkStatus = .todo) {
-        guard canLeave(), workspace != nil else { return }
+        guard canLeave(), workspace != nil, status != .sent || canUseAgents else { return }
         sheet = .task(status)
     }
 
@@ -339,7 +351,7 @@ final class WorkspaceModel {
     }
 
     func drop(_ id: String, in status: WorkStatus, anchor: String?, before: Bool) -> Bool {
-        guard canLeave(), id != anchor, let item = tasks.first(where: { $0.id == id && !$0.deleted }),
+        guard status != .sent || canUseAgents, canLeave(), id != anchor, let item = tasks.first(where: { $0.id == id && !$0.deleted }),
               let workspace else { return false }
         if status == .todo {
             guard item.status != .todo else { return false }
@@ -393,6 +405,7 @@ final class WorkspaceModel {
     }
 
     private func stageSend(_ name: String, _ fields: [String: Any], title: String) {
+        guard canUseAgents else { return }
         var fields = fields
         if fields["requestKey"] == nil { fields["requestKey"] = "mac:" + UUID().uuidString }
         pendingSend = (name, fields, title)
@@ -401,6 +414,7 @@ final class WorkspaceModel {
 
     private func sendable(_ name: String, _ fields: [String: Any], title: String, choosingModel: Bool) async throws {
         if choosingModel {
+            try requireAgentConnection()
             stageSend(name, fields, title: title)
             return
         }
@@ -411,6 +425,7 @@ final class WorkspaceModel {
     }
 
     func finishSend(agent: PhoneAgent?, model: String?, comment: String = "") async throws {
+        try requireAgentConnection()
         guard let intent = pendingSend else { return }
         var input = intent.input
         input["agent"] = agent?.rawValue

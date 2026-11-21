@@ -175,6 +175,7 @@ final class MacTaskAssistant {
                 results[command] = result
                 return result
             case "send":
+                try model.requireAgentConnection()
                 fields["status"] = WorkStatus.sent.rawValue
                 fields["boardId"] = task.boardId
                 fields["requestKey"] = "mac:" + UUID().uuidString

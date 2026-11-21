@@ -952,6 +952,7 @@ private struct SyncSettingsView: View {
                 }
             }))
             .tint(colors.actionAccent)
+            .disabled(workspace.snapshot?.canUseAgents != true)
             if notificationDenied {
                 Text("Allow notifications for OpenTalon in iOS Settings.")
                     .font(.footnote).foregroundStyle(colors.muted)
@@ -1947,7 +1948,9 @@ private struct ProjectTasks: View {
     @State private var moveError: String?
     @State private var showSort = false
 
-    private let statuses: [PhoneTask.Status] = [.todo, .sent, .working, .done]
+    private var statuses: [PhoneTask.Status] {
+        PhoneTask.Status.allCases.filter { $0 != .sent || workspace.snapshot?.canUseAgents == true || workspace.visibleTasks.contains { $0.projectID == project.id && $0.status == .sent } }
+    }
 
     private var canReorder: Bool {
         reorderable(.todo) || reorderable(.done)
@@ -2306,6 +2309,7 @@ private struct ProjectTasks: View {
         }
         moveError = nil
         if status == .sent {
+            guard snapshot.canUseAgents else { return }
             taskToSend = payload
             return
         }
@@ -2341,6 +2345,7 @@ private struct PhoneAgentLabel: View {
 }
 
 private struct PhoneAgentChooser: View {
+    @Environment(PhoneWorkspace.self) private var workspace
     @Environment(\.dismiss) private var dismiss
     @Environment(\.phoneColors) private var colors
     @State private var selectedAgent: PhoneAgent?
@@ -2380,7 +2385,7 @@ private struct PhoneAgentChooser: View {
                     .frame(maxWidth: .infinity)
                     .accessibilityAddTraits(.isHeader)
                 Button("Send", action: send)
-                    .disabled(agent == nil || commentText.utf16.count > 10_000)
+                    .disabled(agent == nil || workspace.snapshot?.canUseAgents != true || commentText.utf16.count > 10_000)
                     .accessibilityIdentifier("confirmAgentSend")
             }
             .buttonStyle(PhoneActionButtonStyle())
@@ -2475,7 +2480,7 @@ private struct PhoneAgentChooser: View {
     }
 
     private func send() {
-        guard let agent, commentText.utf16.count <= 10_000 else { return }
+        guard let agent, workspace.snapshot?.canUseAgents == true, commentText.utf16.count <= 10_000 else { return }
         let model = models.first(where: { $0.id == selectedModel })?.id
         do {
             try choose(agent, model, snapshot.supportsDispatchComments && !commentText.isEmpty ? commentText : nil)
@@ -2987,7 +2992,7 @@ private struct TaskView: View {
                 .buttonStyle(PhoneActionButtonStyle(horizontalPadding: 9))
                 .accessibilityLabel("Mark in progress")
                 .accessibilityIdentifier("taskQuickInProgress")
-            } else if status == .working, workspace.canMarkDone(task), !task.assigned {
+            } else if status == .working, workspace.canMarkDone(task), !task.assigned, snapshot.canUseAgents {
                 sendToAgentButton
                     .buttonStyle(PhoneActionButtonStyle(horizontalPadding: 9))
             }
@@ -3029,7 +3034,7 @@ private struct TaskView: View {
 
         if returningToTodo {
             if canChangeStatus { returnToTodoButton(for: task, in: snapshot, reopening: false) }
-        } else if workspace.canMarkDone(task) {
+        } else if workspace.canMarkDone(task), snapshot.canUseAgents {
             sendToAgentButton
         }
     }
@@ -3118,7 +3123,7 @@ private struct TaskView: View {
             }
             fieldMenu("Status", selected: status,
                       choices: PhoneTask.Status.allCases.filter {
-                          snapshot.supportsTaskOverrides || !task.assigned || $0 != .done || $0 == status
+                          ($0 != .sent || snapshot.canUseAgents) && (snapshot.supportsTaskOverrides || !task.assigned || $0 != .done || $0 == status)
                       },
                       label: \.rawValue) {
                 if $0 == .sent { showSend = true }
@@ -3767,8 +3772,9 @@ private struct CaptureView: View {
                             .buttonStyle(PhoneActionButtonStyle())
                             .disabled(trimmedIdea.isEmpty || tooLong || draftRequest != nil)
                         }
-                        Toggle("Send to agent", isOn: $sendToAgent)
-                            .tint(colors.actionAccent)
+                        if workspace.snapshot?.canUseAgents == true {
+                            Toggle("Send to agent", isOn: $sendToAgent).tint(colors.actionAccent)
+                        }
                     }
                 }
                 .listRowBackground(colors.card)
@@ -4260,6 +4266,9 @@ private struct PhoneAssistantView: View {
                 results[command] = result
                 return result
             case "send", "archive", "trash":
+                if command.operation == "send", workspace.snapshot?.canUseAgents != true {
+                    throw AssistantError.message("Connect MCP in Settings on your Mac to use agents.")
+                }
                 guard !showReviewConfirmation && review?.operation != "send" else {
                     throw AssistantError.message("Finish the current review dialog before starting another.")
                 }

@@ -276,7 +276,7 @@ struct AgentChatView: View {
                     Button("Send", systemImage: "arrow.up") { chat.send(using: model) }
                         .glassPrimary()
                         .keyboardShortcut(.return, modifiers: .command)
-                        .disabled(!chat.canSend || connection?.running == false)
+                        .disabled(!chat.canSend || !model.canUseAgents)
                 }
             }
         }

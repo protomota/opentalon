@@ -334,7 +334,7 @@ class AgentRunner {
     if (this.stopping || this.suspended || this.ticking) return
     this.ticking = true
     try {
-      if (Date.now() - this.lastCommentCheck >= 5 * 60 * 1000) {
+      if (this.connector.status().enabled && this.connector.status().running && Date.now() - this.lastCommentCheck >= 5 * 60 * 1000) {
         this.lastCommentCheck = Date.now()
         await this.store.queueCommentFollowups()
       }

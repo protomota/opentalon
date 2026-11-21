@@ -476,7 +476,7 @@ private struct DashboardCapture: View {
                 .glassPrimary()
                 .frame(minWidth: 96)
                 .disabled(input.isEmpty || tooLong || project == nil || saving)
-                .help("Draft with your default task agent")
+                .help(model.canUseAgents ? "Draft with your default task agent" : "Save your task")
             }
             .disabled(saving)
             if tooLong {
@@ -522,9 +522,12 @@ private struct DashboardCapture: View {
             if let previousDraft {
                 capture = previousDraft
             } else {
-                let draft: AgentDraft? = try? await model.service.call("native_draft_task", [
-                    "idea": idea, "autoProject": autoProject, "autoPriority": selectedPriority == nil
-                ])
+                let draft: AgentDraft?
+                if model.canUseAgents {
+                    draft = try? await model.service.call("native_draft_task", [
+                        "idea": idea, "autoProject": autoProject, "autoPriority": selectedPriority == nil
+                    ])
+                } else { draft = nil }
                 let details = draft.flatMap { $0.details.isUsableForCapture ? $0.details : nil }
                 let suggestedProject = autoProject ? draft?.projectId : nil
                 let newProjectName = autoProject ? draft?.newProjectName.flatMap { $0.isEmpty ? nil : $0 } : nil
@@ -544,7 +547,7 @@ private struct DashboardCapture: View {
                 self.idea = ""
                 selectedProject = nil
                 priority = nil
-                feedback = capture.drafted ? nil : "Agent drafting was unavailable. Your original idea was saved."
+                feedback = capture.drafted || !model.canUseAgents ? nil : "Agent drafting was unavailable. Your original idea was saved."
             } catch {
                 if key == requestKey { retryDraft = capture }
                 failed = true

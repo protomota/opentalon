@@ -577,7 +577,7 @@ private struct SendView: View {
                 Spacer()
                 Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
                 Button("Send to agent", action: send).glassPrimary()
-                    .disabled(options == nil || dispatchComment.utf16.count > 10_000)
+                    .disabled(!model.canUseAgents || options == nil || dispatchComment.utf16.count > 10_000)
             }
         }
         .disabled(busy)

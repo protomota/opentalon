@@ -62,10 +62,11 @@ for (const agent of ['claude-code', 'codex'])
       workingFolder: base,
     })
     const launched = []
+    let connected = true
     const runner = new AgentRunner({
       store: f.store,
       connector: {
-        status: () => ({ running: true }),
+        status: () => ({ enabled: connected, running: connected }),
         configuration: () => ({
           mcpServers: { opentalon: { command: '/app', args: [], env: {} } },
         }),
@@ -94,6 +95,11 @@ for (const agent of ['claude-code', 'codex'])
     await runner.tick()
     assert.equal(launched.length, 0, 'No early wake-up before five minutes')
     runner.lastCommentCheck = Date.now() - 300001
+    connected = false
+    await runner.tick()
+    assert.equal(launched.length, 0, 'MCP off must not queue or launch a comment follow-up')
+    assert.deepEqual(f.store.agentJobs().map(({ id }) => id), [previous.id])
+    connected = true
     await runner.tick()
     assert.equal(launched.length, 1)
     const job = f.store.agentJobs()[0]
